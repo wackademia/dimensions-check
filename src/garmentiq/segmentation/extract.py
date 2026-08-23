@@ -4,7 +4,7 @@ from torchvision import transforms
 import numpy as np
 
 
-def extract(model: torch.nn.Module, image_path: str, processor=None, **kwargs):
+def extract(model: torch.nn.Module, image_path, processor=None, **kwargs):
     """
     Intelligently extracts an image segmentation mask from a given image using either a standard
     PyTorch model or a Processor-based foundation model.
@@ -33,7 +33,12 @@ def extract(model: torch.nn.Module, image_path: str, processor=None, **kwargs):
                                               and the extracted segmentation mask as a numpy array.
     """
     device = "cuda" if next(model.parameters()).is_cuda else "cpu"
-    image = Image.open(image_path).convert("RGB")
+    if isinstance(image_path, str):
+        image = Image.open(image_path).convert("RGB")
+    elif isinstance(image_path, np.ndarray):
+        image = Image.fromarray(image_path.astype(np.uint8)).convert("RGB")
+    else:
+        raise TypeError("image_path must be a file path or an RGB NumPy array")
 
     # Processor-Based Models (SAM)
     if processor is not None:

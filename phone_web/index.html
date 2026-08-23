@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>GarmentIQ Phone Measure</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #101319; color: #f4f6fa; }
+    main { width: min(100%, 760px); margin: auto; padding: 14px; box-sizing: border-box; }
+    h1 { font-size: 1.35rem; margin: 4px 0 10px; }
+    .stage { position: relative; overflow: hidden; border-radius: 14px; background: #000; }
+    video, canvas, #result { display: block; width: 100%; height: auto; }
+    canvas { position: absolute; inset: 0; touch-action: none; }
+    #result { display: none; }
+    .controls { display: grid; gap: 9px; margin-top: 12px; }
+    button, select { min-height: 48px; border: 0; border-radius: 10px; padding: 0 14px; font-size: 1rem; }
+    button { background: #62df9a; color: #07140d; font-weight: 700; }
+    button.secondary { background: #29313e; color: white; }
+    button:disabled { opacity: .5; }
+    #status { min-height: 2.7em; color: #d7deea; }
+    .hint { color: #aab6c8; font-size: .9rem; }
+  </style>
+</head>
+<body><main>
+  <h1>GarmentIQ Phone Measure</h1>
+  <p class="hint">Lay the garment and closed AirPods Pro 2 case flat on the same surface. Keep the camera parallel to them.</p>
+  <div class="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <img id="result" alt="Measured garment">
+  </div>
+  <div class="controls">
+    <select id="className">
+      <option value="">Automatically detect garment type</option>
+      <option>long sleeve dress</option><option>long sleeve top</option>
+      <option>short sleeve dress</option><option>short sleeve top</option>
+      <option>shorts</option><option>skirt</option><option>trousers</option>
+      <option>vest</option><option>vest dress</option>
+    </select>
+    <button id="calibrate" class="secondary">Calibrate: tap both width edges of case</button>
+    <button id="measure" disabled>Measure garment</button>
+    <button id="again" class="secondary" hidden>Return to camera</button>
+    <div id="status">Starting camera…</div>
+  </div>
+</main>
+<script>
+const video = document.querySelector('#video'), canvas = document.querySelector('#overlay');
+const ctx = canvas.getContext('2d'), statusEl = document.querySelector('#status');
+const measureBtn = document.querySelector('#measure'), result = document.querySelector('#result');
+let points = [], pixelsPerCm = 0, calibrating = false;
+
+async function startCamera() {
+  try {
+    video.srcObject = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
+    await new Promise(resolve => video.onloadedmetadata = resolve);
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    statusEl.textContent = 'Camera ready. Calibrate before measuring.';
+  } catch (e) { statusEl.textContent = 'Camera error: ' + e.message; }
+}
+document.querySelector('#calibrate').onclick = () => {
+  points=[]; pixelsPerCm=0; calibrating=true; measureBtn.disabled=true; ctx.clearRect(0,0,canvas.width,canvas.height);
+  statusEl.textContent='Tap the LEFT and RIGHT outer edges of the closed AirPods case (60.6 mm width).';
+};
+canvas.addEventListener('pointerdown', e => {
+  if (!calibrating) return;
+  const r=canvas.getBoundingClientRect();
+  points.push({x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height});
+  ctx.fillStyle='#62df9a'; ctx.beginPath(); ctx.arc(points.at(-1).x,points.at(-1).y,10,0,Math.PI*2); ctx.fill();
+  if(points.length===2){
+    const d=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y);
+    pixelsPerCm=d/6.06; calibrating=false; measureBtn.disabled=false;
+    ctx.strokeStyle='#62df9a';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);ctx.lineTo(points[1].x,points[1].y);ctx.stroke();
+    statusEl.textContent=`Calibrated: ${pixelsPerCm.toFixed(2)} pixels/cm. Keep the phone still.`;
+  }
+});
+measureBtn.onclick = async () => {
+  measureBtn.disabled=true; statusEl.textContent='Measuring on the computer… CPU processing can take a while.';
+  const shot=document.createElement('canvas'); shot.width=video.videoWidth; shot.height=video.videoHeight;
+  shot.getContext('2d').drawImage(video,0,0);
+  const blob=await new Promise(resolve=>shot.toBlob(resolve,'image/jpeg',.9));
+  const form=new FormData(); form.append('frame',blob,'phone.jpg'); form.append('pixels_per_cm',pixelsPerCm);
+  form.append('class_name',document.querySelector('#className').value);
+  try {
+    const response=await fetch('/measure',{method:'POST',body:form}); const data=await response.json();
+    if(!response.ok) throw new Error(data.error||'Measurement failed');
+    result.src=data.image; result.style.display='block'; video.style.display='none'; canvas.style.display='none';
+    document.querySelector('#again').hidden=false;
+    statusEl.textContent=`${data.garment_class} measured in ${data.inference_seconds}s. Values are shown on the image.`;
+  } catch(e) { statusEl.textContent=e.message; measureBtn.disabled=false; }
+};
+document.querySelector('#again').onclick=()=>{result.style.display='none';video.style.display='block';canvas.style.display='block';event.target.hidden=true;measureBtn.disabled=false;};
+startCamera();
+</script></body></html>

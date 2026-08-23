@@ -201,7 +201,7 @@ class tailor:
         )
         print(sep)
 
-    def classify(self, image: str, verbose=False):
+    def classify(self, image: Union[str, np.ndarray], verbose=False):
         """
         Classifies a single garment image using the configured classification model.
 
@@ -214,9 +214,10 @@ class tailor:
                 - label (str): The predicted class label of the garment.
                 - probabilities (List[float]): A list of probabilities for each class.
         """
+        image_input = f"{self.input_dir}/{image}" if isinstance(image, str) else image
         label, probablities = classification.predict(
             model=self.classification_model,
-            image_path=f"{self.input_dir}/{image}",
+            image_path=image_input,
             classes=self.classes,
             resize_dim=self.classification_model_args.get("resize_dim"),
             normalize_mean=self.classification_model_args.get("normalize_mean"),
@@ -225,7 +226,7 @@ class tailor:
         )
         return label, probablities
 
-    def segment(self, image: str):
+    def segment(self, image: Union[str, np.ndarray]):
         """
         Segments a single garment image to extract its mask and optionally modifies the background color.
 
@@ -254,9 +255,10 @@ class tailor:
         }
 
         # 2. Extract using the unified function and unpacked kwargs
+        image_input = f"{self.input_dir}/{image}" if isinstance(image, str) else image
         original_img, mask = segmentation.extract(
             model=self.segmentation_model,
-            image_path=f"{self.input_dir}/{image}",
+            image_path=image_input,
             **extraction_kwargs
         )
 

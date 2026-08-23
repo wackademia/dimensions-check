@@ -2,13 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
+import numpy as np
 from torchvision import transforms
-from typing import Type, List
+from typing import Type, List, Union
 
 
 def predict(
     model: Type[nn.Module],
-    image_path: str,
+    image_path: Union[str, np.ndarray],
     classes: List[str],
     resize_dim=(120, 184),
     normalize_mean=[0.8047, 0.7808, 0.7769],
@@ -42,11 +43,12 @@ def predict(
             - predicted label (str): The class label with the highest predicted probability.
             - prob_list (List[float]): The list of class probabilities in the same order as the sorted class list.
     """
-    # Validate image extension
-    if not any(
-        image_path.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".JPG"]
+    if not isinstance(image_path, (str, np.ndarray)):
+        raise TypeError("image_path must be a file path or an RGB NumPy array")
+    if isinstance(image_path, str) and not any(
+        image_path.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png"]
     ):
-        raise ValueError("Image file must end with .jpg, .jpeg, .png, or .JPG")
+        raise ValueError("Image file must end with .jpg, .jpeg, or .png")
 
     # Sort the classes list to have a consistent order
     sorted_classes = sorted(classes)
@@ -61,7 +63,11 @@ def predict(
     )
 
     # Load and preprocess the image
-    image = Image.open(image_path).convert("RGB")
+    image = (
+        Image.open(image_path).convert("RGB")
+        if isinstance(image_path, str)
+        else Image.fromarray(image_path.astype(np.uint8)).convert("RGB")
+    )
     image_tensor = transform(image).unsqueeze(0).to(device)  # add batch dimension
 
     # Forward pass

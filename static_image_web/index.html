@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GarmentIQ Original Image Demo</title>
+<style>
+:root{font-family:Inter,system-ui,sans-serif;color:#eff4fb;background:#0d1117}*{box-sizing:border-box}
+body{margin:0}main{max-width:1050px;margin:auto;padding:28px 18px}h1{margin:0 0 8px}.sub{color:#aebbd0;margin:0 0 24px}
+.panel{background:#161d27;border:1px solid #2a3545;border-radius:16px;padding:18px}.controls{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}
+input,select,button{min-height:48px;border:1px solid #344258;border-radius:9px;background:#0f151e;color:#eef;padding:10px;font-size:15px}
+button{background:#58dc96;color:#07130c;border:0;font-weight:750;cursor:pointer}button:disabled{opacity:.5}.status{padding:14px 2px;color:#bec9d9}
+.output{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:18px}img{width:100%;border-radius:12px;background:#090c10}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #2b3544}.badge{display:inline-block;padding:5px 9px;border-radius:20px;background:#243347;color:#9ee8bd}
+@media(max-width:720px){.controls,.output{grid-template-columns:1fr}}
+</style></head><body><main>
+<h1>GarmentIQ — Original Static Image Pipeline</h1>
+<p class="sub">Upload one garment image to demonstrate classification → segmentation → landmarks → dimensions.</p>
+<section class="panel">
+  <div class="controls">
+    <input id="image" type="file" accept="image/*">
+    <select id="className"><option value="">Auto-detect class</option><option>long sleeve dress</option><option>long sleeve top</option><option>short sleeve dress</option><option>short sleeve top</option><option>shorts</option><option>skirt</option><option>trousers</option><option>vest</option><option>vest dress</option></select>
+    <input id="scale" type="number" min="0.01" step="0.01" placeholder="Pixels/cm (optional)">
+  </div>
+  <button id="run" style="width:100%;margin-top:12px">Run original measurement pipeline</button>
+  <div class="status" id="status">Ready. For the best result, use a garment laid flat on a plain background.</div>
+  <div class="output" id="output" hidden><img id="result"><div><p>Detected: <span class="badge" id="detected"></span></p><table><thead><tr><th>Dimension</th><th>Value</th></tr></thead><tbody id="rows"></tbody></table><p class="sub" id="stages"></p></div></div>
+</section></main><script>
+const run=document.querySelector('#run'),statusEl=document.querySelector('#status');
+run.onclick=async()=>{const file=document.querySelector('#image').files[0];if(!file){statusEl.textContent='Please select an image.';return}
+run.disabled=true;statusEl.textContent='Running the original models on CPU. This may take a while…';document.querySelector('#output').hidden=true;
+const form=new FormData();form.append('image',file);form.append('class_name',document.querySelector('#className').value);form.append('pixels_per_cm',document.querySelector('#scale').value);
+try{const response=await fetch('/measure',{method:'POST',body:form});const data=await response.json();if(!response.ok)throw new Error(data.error||'Measurement failed');
+document.querySelector('#result').src=data.image;document.querySelector('#detected').textContent=data.garment_class;const rows=document.querySelector('#rows');rows.innerHTML='';
+Object.entries(data.measurements).forEach(([name,m])=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${name}</td><td>${m.distance.toFixed(2)} ${m.unit}</td>`;rows.appendChild(tr)});
+document.querySelector('#stages').textContent='Completed stages: '+data.stages.join(' → ');document.querySelector('#output').hidden=false;statusEl.textContent='Measurement complete.';
+}catch(e){statusEl.textContent=e.message}finally{run.disabled=false}};
+</script></body></html>
