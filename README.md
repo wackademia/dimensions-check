@@ -14,6 +14,12 @@ Both support `--device cpu`, `--device cuda`, `--low-vram`, and
 segmentation input and move one model at a time to the GPU. See the guide for
 the smoke test, model copying, LAN phone use, and troubleshooting.
 
+The camera page now supports **paused production-line underwear sizing**: fixed
+top-down camera, 12-inch ruler calibration, empty-area reference, automatic
+stable-frame inspection, and M/L/XL/2XL estimates from your supplied measurements.
+See [the live production-line guide](docs/LIVE_PRODUCTION_LINE.md) for setup,
+the required empty gap between garments, reference values and validation limits.
+
 The original upstream package documentation follows.
 
 [🌐 Official website](https://garmentiq.ly.gd.edu.kg/) | [📖 Documentation](https://garmentiq.ly.gd.edu.kg/documentation/) | [⚙️ Web pipeline](https://garmentiq.ly.gd.edu.kg/application/) | [🪄 MagicBox](https://garmentiq.ly.gd.edu.kg/documentation/magicbox/) | [📄 Paper](https://archive.gd.edu.kg/abs/20250525121523/)

@@ -3,92 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>GarmentIQ Phone Measure</title>
-  <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: #101319; color: #f4f6fa; }
-    main { width: min(100%, 760px); margin: auto; padding: 14px; box-sizing: border-box; }
-    h1 { font-size: 1.35rem; margin: 4px 0 10px; }
-    .stage { position: relative; overflow: hidden; border-radius: 14px; background: #000; }
-    video, canvas, #result { display: block; width: 100%; height: auto; }
-    canvas { position: absolute; inset: 0; touch-action: none; }
-    #result { display: none; }
-    .controls { display: grid; gap: 9px; margin-top: 12px; }
-    button, select { min-height: 48px; border: 0; border-radius: 10px; padding: 0 14px; font-size: 1rem; }
-    button { background: #62df9a; color: #07140d; font-weight: 700; }
-    button.secondary { background: #29313e; color: white; }
-    button:disabled { opacity: .5; }
-    #status { min-height: 2.7em; color: #d7deea; }
-    .hint { color: #aab6c8; font-size: .9rem; }
-  </style>
+  <title>Size Check | Live inspection</title>
+  <link rel="stylesheet" href="/phone_web/style.css">
 </head>
 <body><main>
-  <h1>GarmentIQ Phone Measure</h1>
-  <p class="hint">Lay the garment and a 12-inch steel ruler flat on the same surface. Keep the entire ruler visible and the camera parallel to the surface.</p>
-  <div class="stage">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="overlay"></canvas>
-    <img id="result" alt="Measured garment">
+  <header><p class="eyebrow">GARMENTIQ / SIZE CHECK</p><h1>Live line inspection</h1>
+    <p>One flat item, one paused inspection. Sizes are estimated from your M / L / XL / 2XL underwear references.</p></header>
+  <div class="layout">
+    <section aria-label="Camera and setup">
+      <div class="stage"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div>
+      <p id="cameraStatus" class="hint" role="status">Starting camera...</p>
+      <div class="controls">
+        <label>Camera <select id="camera" aria-label="Camera"><option value="">Default camera</option></select></label>
+        <label>Inspection mode <select id="mode"><option value="underwear">Underwear: estimate size automatically</option><option value="measure">Other garments: measure one frame</option></select></label>
+        <label id="classControl" hidden>Garment type <select id="className">
+          <option value="">Automatically detect garment type</option>
+          <option>long sleeve dress</option><option>long sleeve top</option><option>short sleeve dress</option><option>short sleeve top</option>
+          <option>shorts</option><option>skirt</option><option>trousers</option><option>vest</option><option>vest dress</option>
+        </select></label>
+        <div class="buttons"><button id="calibrate" class="secondary" disabled>1. Calibrate 12-inch ruler</button><button id="area" class="secondary" disabled>2. Set inspection area</button></div>
+        <button id="background" class="secondary" disabled>3. Capture empty inspection area</button>
+        <button id="cancel" class="secondary" hidden>Cancel selection</button>
+        <p id="setup" class="hint">Fix the camera directly overhead. Use the 0 and 12-inch ruler marks at garment height, not the metal ends.</p>
+        <div class="buttons"><button id="start" disabled>Start inspection</button><button id="stop" class="secondary" disabled>Stop</button><button id="retry" class="secondary" disabled>Reinspect item</button></div>
+        <button id="measure" hidden disabled>Measure one frame</button>
+      </div>
+    </section>
+    <section class="panel" aria-label="Inspection result">
+      <p class="eyebrow">CURRENT INSPECTION</p>
+      <div id="size" class="size" aria-live="polite">Not running</div>
+      <p id="status" role="status">Calibrate, remove the ruler, then capture the empty inspection area.</p>
+      <p id="activity" class="hint"></p>
+      <div id="resultPanel" hidden>
+        <p id="timing" class="hint"></p>
+        <img id="result" alt="Last inspected snapshot with garment measurement lines">
+        <div class="table-scroll"><table><thead><tr><th>Flat dimension</th><th>Measured</th><th>Reference</th></tr></thead><tbody id="measurements"></tbody></table></div>
+      </div>
+      <p class="hint">Keep the waistband horizontal at the top. Leave clear background around the whole item and an empty gap between items. Hold each item until the result appears.</p>
+      <details><summary>Your size references (inches)</summary><div class="table-scroll"><table id="references"></table></div>
+        <p class="hint">A match requires all four dimensions within ±<span id="tolerance">0.50</span> in of exactly one reference. This provisional allowance is not a factory acceptance tolerance. Unmatched or ambiguous items need manual review.</p></details>
+      <p class="hint">Reference-based estimate, not a certified size check. Only the supplied underwear style and sizes are supported. Camera/lighting changes require setup again.</p>
+    </section>
   </div>
-  <div class="controls">
-    <select id="className">
-      <option value="">Automatically detect garment type</option>
-      <option>long sleeve dress</option><option>long sleeve top</option>
-      <option>short sleeve dress</option><option>short sleeve top</option>
-      <option>shorts</option><option>skirt</option><option>trousers</option>
-      <option>vest</option><option>vest dress</option>
-    </select>
-    <button id="calibrate" class="secondary">Calibrate with 12-inch ruler</button>
-    <button id="measure" disabled>Measure garment</button>
-    <button id="again" class="secondary" hidden>Return to camera</button>
-    <div id="status">Starting camera…</div>
-  </div>
-</main>
-<script>
-const video = document.querySelector('#video'), canvas = document.querySelector('#overlay');
-const ctx = canvas.getContext('2d'), statusEl = document.querySelector('#status');
-const measureBtn = document.querySelector('#measure'), result = document.querySelector('#result');
-let points = [], pixelsPerInch = 0, calibrating = false;
-
-async function startCamera() {
-  try {
-    video.srcObject = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
-    await new Promise(resolve => video.onloadedmetadata = resolve);
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    statusEl.textContent = 'Camera ready. Calibrate before measuring.';
-  } catch (e) { statusEl.textContent = 'Camera error: ' + e.message; }
-}
-document.querySelector('#calibrate').onclick = () => {
-  points=[]; pixelsPerInch=0; calibrating=true; measureBtn.disabled=true; ctx.clearRect(0,0,canvas.width,canvas.height);
-  statusEl.textContent='Tap the 0-inch and 12-inch marks at opposite ends of the steel ruler.';
-};
-canvas.addEventListener('pointerdown', e => {
-  if (!calibrating) return;
-  const r=canvas.getBoundingClientRect();
-  points.push({x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height});
-  ctx.fillStyle='#62df9a'; ctx.beginPath(); ctx.arc(points.at(-1).x,points.at(-1).y,10,0,Math.PI*2); ctx.fill();
-  if(points.length===2){
-    const d=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y);
-    pixelsPerInch=d/12; calibrating=false; measureBtn.disabled=false;
-    ctx.strokeStyle='#62df9a';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);ctx.lineTo(points[1].x,points[1].y);ctx.stroke();
-    statusEl.textContent=`Calibrated: ${pixelsPerInch.toFixed(2)} pixels/inch. Remove the ruler if needed, but keep the camera still.`;
-  }
-});
-measureBtn.onclick = async () => {
-  measureBtn.disabled=true; statusEl.textContent='Measuring on the computer… CPU processing can take a while.';
-  const shot=document.createElement('canvas'); shot.width=video.videoWidth; shot.height=video.videoHeight;
-  shot.getContext('2d').drawImage(video,0,0);
-  const blob=await new Promise(resolve=>shot.toBlob(resolve,'image/jpeg',.9));
-  const form=new FormData(); form.append('frame',blob,'phone.jpg'); form.append('pixels_per_inch',pixelsPerInch);
-  form.append('class_name',document.querySelector('#className').value);
-  try {
-    const response=await fetch('/measure',{method:'POST',body:form}); const data=await response.json();
-    if(!response.ok) throw new Error(data.error||'Measurement failed');
-    result.src=data.image; result.style.display='block'; video.style.display='none'; canvas.style.display='none';
-    document.querySelector('#again').hidden=false;
-    statusEl.textContent=`${data.garment_class} measured in ${data.inference_seconds}s. Values are shown on the image.`;
-  } catch(e) { statusEl.textContent=e.message; measureBtn.disabled=false; }
-};
-document.querySelector('#again').onclick=()=>{result.style.display='none';video.style.display='block';canvas.style.display='block';event.target.hidden=true;measureBtn.disabled=false;};
-startCamera();
-</script></body></html>
+</main><script type="module" src="/phone_web/app.js"></script></body>
+</html>

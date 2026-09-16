@@ -1,0 +1,35 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #10151d; color: #edf3fc; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1320px; margin: auto; padding: 24px; }
+header { margin-bottom: 26px; }
+h1 { margin: 4px 0 12px; font-size: 2rem; }
+p { line-height: 1.5; }
+.eyebrow { color: #81e6b5; font-size: .75rem; font-weight: 700; letter-spacing: .14em; }
+.layout { display: grid; grid-template-columns: 1.25fr 1fr; gap: 24px; align-items: start; }
+.stage { position: relative; background: #05090e; border-radius: 14px; overflow: hidden; min-height: 160px; }
+video, #overlay, #result { display: block; width: 100%; height: auto; }
+#overlay { position: absolute; inset: 0; touch-action: none; }
+.controls { display: grid; gap: 12px; }
+label { display: grid; gap: 6px; font-size: .9rem; }
+button, select { min-height: 46px; border: 1px solid #354559; border-radius: 9px; padding: 10px 14px; font: inherit; }
+button { background: #81e6b5; color: #0a231a; font-weight: 650; cursor: pointer; }
+button.secondary, select { background: #202b3b; color: #edf3fc; }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #b2caff; outline-offset: 3px; }
+.buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.buttons button { flex: 1; }
+.panel { padding: 24px; border: 1px solid #304055; border-radius: 14px; background: #18212d; }
+.size { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 750; color: #edf3fc; }
+.size.matched { color: #81e6b5; }
+.size.uncertain { color: #ffd38a; }
+.hint { color: #adbdcf; font-size: .86rem; }
+#status { min-height: 3em; }
+#result { border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; font-size: .86rem; text-align: left; }
+th, td { padding: 10px 6px; border-bottom: 1px solid #304055; white-space: nowrap; }
+.table-scroll { overflow-x: auto; }
+details { margin: 24px 0; }
+summary { cursor: pointer; }
+[hidden] { display: none !important; }
+@media (max-width: 800px) { main { padding: 14px; } .layout { grid-template-columns: 1fr; } .panel { padding: 18px; } }

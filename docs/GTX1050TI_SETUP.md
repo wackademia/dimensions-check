@@ -120,8 +120,13 @@ Stop the static page first. For the camera attached to the new PC:
 
 Open **http://127.0.0.1:8080**, allow camera access, and calibrate with the ruler.
 This shortcut uses localhost HTTP, which avoids the earlier local HTTPS issue.
-The phone UI captures individual frames for measurement; inference on this GPU
-is not promised to run at video frame rate.
+The camera page supports automatic underwear size estimation for **paused**
+production-line items. After calibration, set the inspection area, remove the
+ruler and capture the empty area, then click Start inspection. It submits one
+stable snapshot per item and compares the four dimensions with your M/L/XL/2XL
+references. See [the production-line setup guide](LIVE_PRODUCTION_LINE.md).
+Hold each item until its result appears and leave an empty gap between items;
+inference on this GPU is not promised to run at video frame rate.
 
 For an actual phone on the same LAN, stop the PC server and run:
 

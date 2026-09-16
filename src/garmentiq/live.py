@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Union
@@ -11,6 +12,7 @@ import cv2
 import numpy as np
 
 from . import utils
+from .underwear_sizes import check_inspection_landmarks, check_inspection_mask
 
 
 @dataclass
@@ -37,17 +39,21 @@ class LiveDetector:
         pixels_per_unit: Optional[float] = None,
         unit_name: str = "px",
         class_name: Optional[str] = None,
+        inspect_underwear: bool = False,
     ):
-        if pixels_per_unit is not None and pixels_per_unit <= 0:
+        if pixels_per_unit is not None and (not math.isfinite(pixels_per_unit) or pixels_per_unit <= 0):
             raise ValueError("pixels_per_unit must be greater than zero")
+        if inspect_underwear and (not pixels_per_unit or unit_name != "in" or class_name != "shorts"):
+            raise ValueError("Underwear inspection requires inch calibration and the shorts landmark model")
         self.agent = agent
         self.pixels_per_unit = pixels_per_unit
         self.unit_name = unit_name if pixels_per_unit else "px"
         self.class_name = class_name
+        self.inspect_underwear = inspect_underwear
 
     def process_frame(self, frame_bgr: np.ndarray) -> LiveResult:
         """Measure one OpenCV BGR frame and return an annotated BGR frame."""
-        if not isinstance(frame_bgr, np.ndarray) or frame_bgr.ndim != 3:
+        if not isinstance(frame_bgr, np.ndarray) or frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
             raise ValueError("frame_bgr must be a HxWx3 NumPy array")
 
         started = time.perf_counter()
@@ -58,11 +64,13 @@ class LiveDetector:
 
         mask = None
         detection_image = rgb
-        if needs_mask or use_bg:
+        if needs_mask or use_bg or self.inspect_underwear:
             segmented = self.agent.segment(rgb)
             mask = segmented[1]
             if use_bg:
                 detection_image = segmented[2]
+        if self.inspect_underwear:
+            check_inspection_mask(mask)
 
         coords, confidences, detection = self.agent.detect(label, detection_image)
         if self.agent.do_refine:
@@ -77,6 +85,8 @@ class LiveDetector:
         cleaned = utils.clean_detection_dict(label, "live_frame", detection)
         _, cleaned = utils.compute_measurement_distances(cleaned)
         garment = cleaned["live_frame"]
+        if self.inspect_underwear:
+            check_inspection_landmarks(garment["landmarks"])
         measurements = copy.deepcopy(garment["measurements"])
         if self.pixels_per_unit:
             for measurement in measurements.values():
