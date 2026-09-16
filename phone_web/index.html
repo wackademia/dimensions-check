@@ -24,7 +24,7 @@
 </head>
 <body><main>
   <h1>GarmentIQ Phone Measure</h1>
-  <p class="hint">Lay the garment and closed AirPods Pro 2 case flat on the same surface. Keep the camera parallel to them.</p>
+  <p class="hint">Lay the garment and a 12-inch steel ruler flat on the same surface. Keep the entire ruler visible and the camera parallel to the surface.</p>
   <div class="stage">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay"></canvas>
@@ -38,7 +38,7 @@
       <option>shorts</option><option>skirt</option><option>trousers</option>
       <option>vest</option><option>vest dress</option>
     </select>
-    <button id="calibrate" class="secondary">Calibrate: tap both width edges of case</button>
+    <button id="calibrate" class="secondary">Calibrate with 12-inch ruler</button>
     <button id="measure" disabled>Measure garment</button>
     <button id="again" class="secondary" hidden>Return to camera</button>
     <div id="status">Starting camera…</div>
@@ -48,7 +48,7 @@
 const video = document.querySelector('#video'), canvas = document.querySelector('#overlay');
 const ctx = canvas.getContext('2d'), statusEl = document.querySelector('#status');
 const measureBtn = document.querySelector('#measure'), result = document.querySelector('#result');
-let points = [], pixelsPerCm = 0, calibrating = false;
+let points = [], pixelsPerInch = 0, calibrating = false;
 
 async function startCamera() {
   try {
@@ -59,8 +59,8 @@ async function startCamera() {
   } catch (e) { statusEl.textContent = 'Camera error: ' + e.message; }
 }
 document.querySelector('#calibrate').onclick = () => {
-  points=[]; pixelsPerCm=0; calibrating=true; measureBtn.disabled=true; ctx.clearRect(0,0,canvas.width,canvas.height);
-  statusEl.textContent='Tap the LEFT and RIGHT outer edges of the closed AirPods case (60.6 mm width).';
+  points=[]; pixelsPerInch=0; calibrating=true; measureBtn.disabled=true; ctx.clearRect(0,0,canvas.width,canvas.height);
+  statusEl.textContent='Tap the 0-inch and 12-inch marks at opposite ends of the steel ruler.';
 };
 canvas.addEventListener('pointerdown', e => {
   if (!calibrating) return;
@@ -69,9 +69,9 @@ canvas.addEventListener('pointerdown', e => {
   ctx.fillStyle='#62df9a'; ctx.beginPath(); ctx.arc(points.at(-1).x,points.at(-1).y,10,0,Math.PI*2); ctx.fill();
   if(points.length===2){
     const d=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y);
-    pixelsPerCm=d/6.06; calibrating=false; measureBtn.disabled=false;
+    pixelsPerInch=d/12; calibrating=false; measureBtn.disabled=false;
     ctx.strokeStyle='#62df9a';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);ctx.lineTo(points[1].x,points[1].y);ctx.stroke();
-    statusEl.textContent=`Calibrated: ${pixelsPerCm.toFixed(2)} pixels/cm. Keep the phone still.`;
+    statusEl.textContent=`Calibrated: ${pixelsPerInch.toFixed(2)} pixels/inch. Remove the ruler if needed, but keep the camera still.`;
   }
 });
 measureBtn.onclick = async () => {
@@ -79,7 +79,7 @@ measureBtn.onclick = async () => {
   const shot=document.createElement('canvas'); shot.width=video.videoWidth; shot.height=video.videoHeight;
   shot.getContext('2d').drawImage(video,0,0);
   const blob=await new Promise(resolve=>shot.toBlob(resolve,'image/jpeg',.9));
-  const form=new FormData(); form.append('frame',blob,'phone.jpg'); form.append('pixels_per_cm',pixelsPerCm);
+  const form=new FormData(); form.append('frame',blob,'phone.jpg'); form.append('pixels_per_inch',pixelsPerInch);
   form.append('class_name',document.querySelector('#className').value);
   try {
     const response=await fetch('/measure',{method:'POST',body:form}); const data=await response.json();

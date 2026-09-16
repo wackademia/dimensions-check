@@ -52,7 +52,7 @@ def run_original_pipeline(image_rgb, forced_class=None):
     return label, cleaned["uploaded_image"]
 
 
-def annotate(frame_bgr, garment, pixels_per_cm=None):
+def annotate(frame_bgr, garment, pixels_per_inch=None):
     frame = frame_bgr.copy()
     landmarks = garment["landmarks"]
     measurements = copy.deepcopy(garment["measurements"])
@@ -72,9 +72,9 @@ def annotate(frame_bgr, garment, pixels_per_cm=None):
         p1 = (round(start["x"]), round(start["y"]))
         p2 = (round(end["x"]), round(end["y"]))
         cv2.line(frame, p1, p2, (30, 220, 255), 3)
-        if pixels_per_cm:
-            measurement["distance"] /= pixels_per_cm
-            measurement["unit"] = "cm"
+        if pixels_per_inch:
+            measurement["distance"] /= pixels_per_inch
+            measurement["unit"] = "in"
         else:
             measurement["unit"] = "px"
         text = f'{name}: {measurement["distance"]:.2f} {measurement["unit"]}'
@@ -94,14 +94,14 @@ def measure():
         return jsonify(error="The uploaded file is not a readable image"), 400
     image_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     forced_class = request.form.get("class_name") or None
-    pixels_per_cm = request.form.get("pixels_per_cm", type=float)
-    if pixels_per_cm is not None and pixels_per_cm <= 0:
-        return jsonify(error="Pixels per cm must be greater than zero"), 400
+    pixels_per_inch = request.form.get("pixels_per_inch", type=float)
+    if pixels_per_inch is None or pixels_per_inch <= 0:
+        return jsonify(error="Calibrate using the ruler's 0-inch and 12-inch marks first"), 400
 
     try:
         with inference_lock:
             label, garment = run_original_pipeline(image_rgb, forced_class)
-        annotated, measurements = annotate(frame_bgr, garment, pixels_per_cm)
+        annotated, measurements = annotate(frame_bgr, garment, pixels_per_inch)
         ok, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 90])
         if not ok:
             raise RuntimeError("Could not encode the annotated image")

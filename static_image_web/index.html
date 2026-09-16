@@ -1,36 +1,28 @@
-<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GarmentIQ Original Image Demo</title>
-<style>
-:root{font-family:Inter,system-ui,sans-serif;color:#eff4fb;background:#0d1117}*{box-sizing:border-box}
-body{margin:0}main{max-width:1050px;margin:auto;padding:28px 18px}h1{margin:0 0 8px}.sub{color:#aebbd0;margin:0 0 24px}
-.panel{background:#161d27;border:1px solid #2a3545;border-radius:16px;padding:18px}.controls{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}
-input,select,button{min-height:48px;border:1px solid #344258;border-radius:9px;background:#0f151e;color:#eef;padding:10px;font-size:15px}
-button{background:#58dc96;color:#07130c;border:0;font-weight:750;cursor:pointer}button:disabled{opacity:.5}.status{padding:14px 2px;color:#bec9d9}
-.output{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:18px}img{width:100%;border-radius:12px;background:#090c10}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #2b3544}.badge{display:inline-block;padding:5px 9px;border-radius:20px;background:#243347;color:#9ee8bd}
-@media(max-width:720px){.controls,.output{grid-template-columns:1fr}}
-</style></head><body><main>
-<h1>GarmentIQ — Original Static Image Pipeline</h1>
-<p class="sub">Upload one garment image to demonstrate classification → segmentation → landmarks → dimensions.</p>
-<section class="panel">
-  <div class="controls">
-    <input id="image" type="file" accept="image/*">
-    <select id="className"><option value="">Auto-detect class</option><option>long sleeve dress</option><option>long sleeve top</option><option>short sleeve dress</option><option>short sleeve top</option><option>shorts</option><option>skirt</option><option>trousers</option><option>vest</option><option>vest dress</option></select>
-    <input id="scale" type="number" min="0.01" step="0.01" placeholder="Pixels/cm (optional)">
-  </div>
-  <button id="run" style="width:100%;margin-top:12px">Run original measurement pipeline</button>
-  <div class="status" id="status">Ready. For the best result, use a garment laid flat on a plain background.</div>
-  <div class="output" id="output" hidden><img id="result"><div><p>Detected: <span class="badge" id="detected"></span></p><table><thead><tr><th>Dimension</th><th>Value</th></tr></thead><tbody id="rows"></tbody></table><p class="sub" id="stages"></p></div></div>
-</section></main><script>
-const run=document.querySelector('#run'),statusEl=document.querySelector('#status');
-run.onclick=async()=>{const file=document.querySelector('#image').files[0];if(!file){statusEl.textContent='Please select an image.';return}
-run.disabled=true;statusEl.textContent='Running the original models on CPU. This may take a while…';document.querySelector('#output').hidden=true;
-const form=new FormData();form.append('image',file);form.append('class_name',document.querySelector('#className').value);form.append('pixels_per_cm',document.querySelector('#scale').value);
-try{const response=await fetch('/measure',{method:'POST',body:form});const data=await response.json();if(!response.ok)throw new Error(data.error||'Measurement failed');
-document.querySelector('#result').src=data.image;document.querySelector('#detected').textContent=data.garment_class;const rows=document.querySelector('#rows');rows.innerHTML='';
-Object.entries(data.measurements).forEach(([name,m])=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${name}</td><td>${m.distance.toFixed(2)} ${m.unit}</td>`;rows.appendChild(tr)});
-document.querySelector('#stages').textContent='Completed stages: '+data.stages.join(' → ');document.querySelector('#output').hidden=false;statusEl.textContent='Measurement complete.';
-}catch(e){statusEl.textContent=e.message}finally{run.disabled=false}};
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GarmentIQ Measurement</title>
+<style>:root{font-family:system-ui;color:#eff4fb;background:#0d1117}*{box-sizing:border-box}body{margin:0}main{max-width:1180px;margin:auto;padding:28px 18px}h1{margin:0 0 8px}.sub,.note{color:#aebbd0}.panel{background:#161d27;border:1px solid #2a3545;border-radius:16px;padding:18px}.controls{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}input,select,button{min-height:48px;border:1px solid #344258;border-radius:9px;background:#0f151e;color:#eef;padding:10px;font-size:15px}button{background:#58dc96;color:#07130c;border:0;font-weight:750;cursor:pointer}button:disabled{opacity:.5}.status{padding:14px 2px;color:#bec9d9}.preview{margin-top:14px;overflow:hidden;border-radius:12px;background:#090c10}#preview{display:block;width:100%;height:auto;cursor:crosshair}.output{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(470px,1fr);gap:18px}.output img{width:100%;border-radius:12px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #2b3544}.badge{padding:5px 9px;border-radius:20px;background:#243347;color:#9ee8bd}.within{color:#74e7a6}.outside{color:#ffb36b}.note{font-size:.84rem}@media(max-width:820px){.controls,.output{grid-template-columns:1fr}}</style></head>
+<body><main><h1>GarmentIQ — Ruler-Calibrated Measurement</h1><p class="sub">Upload a top-down photo with the garment and a fully visible 12-inch ruler on the same surface.</p><section class="panel">
+<div class="controls"><input id="image" type="file" accept="image/*"><select id="className"><option value="shorts" selected>Underwear / shorts</option><option value="">Auto-detect</option><option>long sleeve dress</option><option>long sleeve top</option><option>short sleeve dress</option><option>short sleeve top</option><option>skirt</option><option>trousers</option><option>vest</option><option>vest dress</option></select><select id="size"><option>XXS</option><option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option><option>2XL</option><option>3XL</option><option>4XL</option><option>5XL</option></select></div>
+<div class="preview" id="previewWrap" hidden><canvas id="preview"></canvas></div><button id="calibrate" style="width:100%;margin-top:12px" disabled>Calibrate: select ruler endpoints</button><button id="run" style="width:100%;margin-top:12px" disabled>Measure and compare size</button><div class="status" id="status">Choose an image, garment type, and reference size.</div>
+<div class="output" id="output" hidden><img id="result"><div><p>Detected: <span class="badge" id="detected"></span> Size: <span class="badge" id="selectedSize"></span></p><table><thead><tr><th>Dimension</th><th>Measured</th><th>Reference</th><th>Check</th></tr></thead><tbody id="rows"></tbody></table><p class="note" id="referenceNote">Underwear references for M–2XL come from the supplied measured samples and use a ±0.50-inch comparison tolerance. Other entries remain approximate apparel guides.</p><p class="sub" id="stages"></p></div></div></section></main>
+<script>
+const $=s=>document.querySelector(s),run=$('#run'),statusEl=$('#status'),fileInput=$('#image'),calibrate=$('#calibrate'),preview=$('#preview'),ctx=preview.getContext('2d');let sourceImage,points=[],pixelsPerInch=0,calibrating=false;
+const offsets={XXS:-3,XS:-2,S:-1,M:0,L:1,XL:2,'2XL':3,'3XL':4,'4XL':5,'5XL':6};
+const underwearReferences={
+M:{'front rise':11.24,'full length':11.36,hips:14.62,waist:13.69},
+L:{'front rise':11.14,'full length':12.65,hips:16.72,waist:14.62},
+XL:{'front rise':11.30,'full length':12.16,hips:17.05,waist:15.79},
+'2XL':{'front rise':12.28,'full length':12.39,hips:18.09,waist:16.84}};
+const ranges={
+'long sleeve top':{'front length':[28.5,1,.75],'back width':[17.5,.75,.55],chest:[20.5,1,1],'sleeve width':[7,.6,.4],'sleeve length':[25,1,.55]},
+'short sleeve top':{'front length':[27.5,1,.7],'back width':[17.5,.75,.55],chest:[20.5,1,1],'sleeve width':[7.5,.75,.4],'sleeve length':[8.5,1,.35]},
+'long sleeve dress':{'full length':[43,2,.65],chest:[20,1,1],'sleeve width':[7,.6,.4],waist:[17.5,1,1],hips:[21,1,1],'sleeve length':[24.5,1,.5]},
+'short sleeve dress':{'full length':[37,2,.6],chest:[20,1,1],'sleeve width':[7.5,.75,.4],waist:[17.5,1,1],hips:[21,1,1],'sleeve length':[8.5,1,.35]},
+shorts:{waist:[16,1,1],'full length':[18,1.5,.5],'front rise':[11,.75,.35],hips:[21,1,1]},skirt:{waist:[16,1,1],'full length':[25,2,.5],hips:[21,1,1]},trousers:{waist:[16,1,1],'full length':[41,1.5,.5],'front rise':[11.5,.75,.35],hips:[21,1,1]},vest:{'front length':[25,1,.6],'back width':[17,.75,.55],chest:[20,1,1]},'vest dress':{'full length':[39,2,.6],chest:[20,1,1],waist:[17.5,1,1],hips:[21,1,1]}};
+function referenceValue(type,name,size){return type==='shorts'?underwearReferences[size]?.[name]:null}
+function expected(type,name,size){const supplied=referenceValue(type,name,size);if(supplied!=null)return[supplied-.5,supplied+.5];const s=ranges[type]?.[name];if(!s)return null;const c=s[0]+offsets[size]*s[2];return[c-s[1],c+s[1]]}
+function draw(){if(!sourceImage)return;ctx.clearRect(0,0,preview.width,preview.height);ctx.drawImage(sourceImage,0,0);ctx.fillStyle='#58dc96';for(const p of points){ctx.beginPath();ctx.arc(p.x,p.y,Math.max(6,preview.width/150),0,7);ctx.fill()}if(points.length===2){ctx.strokeStyle='#58dc96';ctx.lineWidth=Math.max(3,preview.width/300);ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);ctx.lineTo(points[1].x,points[1].y);ctx.stroke()}}
+fileInput.onchange=()=>{const f=fileInput.files[0];points=[];pixelsPerInch=0;run.disabled=true;if(!f)return;const i=new Image();i.onload=()=>{sourceImage=i;preview.width=i.naturalWidth;preview.height=i.naturalHeight;$('#previewWrap').hidden=false;draw();calibrate.disabled=false;URL.revokeObjectURL(i.src);statusEl.textContent="Click Calibrate, then select the ruler's 0-inch and 12-inch marks."};i.src=URL.createObjectURL(f)};
+calibrate.onclick=()=>{points=[];pixelsPerInch=0;calibrating=true;run.disabled=true;draw();statusEl.textContent="Click the ruler's 0-inch mark, then its 12-inch mark."};
+preview.onpointerdown=e=>{if(!calibrating)return;const r=preview.getBoundingClientRect();points.push({x:(e.clientX-r.left)*preview.width/r.width,y:(e.clientY-r.top)*preview.height/r.height});draw();if(points.length===2){pixelsPerInch=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y)/12;calibrating=false;run.disabled=false;statusEl.textContent=`Calibrated: ${pixelsPerInch.toFixed(2)} pixels/inch.`}};
+run.onclick=async()=>{const file=fileInput.files[0];if(!file||!pixelsPerInch)return;run.disabled=true;statusEl.textContent='Measuring on CPU…';$('#output').hidden=true;const form=new FormData();form.append('image',file);form.append('class_name',$('#className').value);form.append('pixels_per_inch',pixelsPerInch);try{const response=await fetch('/measure',{method:'POST',body:form}),data=await response.json();if(!response.ok)throw Error(data.error||'Measurement failed');$('#result').src=data.image;$('#detected').textContent=data.garment_class;const size=$('#size').value;$('#selectedSize').textContent=size;$('#rows').innerHTML='';for(const[name,m]of Object.entries(data.measurements)){const ref=referenceValue(data.garment_class,name,size),ex=expected(data.garment_class,name,size),inside=ex&&m.distance>=ex[0]&&m.distance<=ex[1],label=ref!=null?ref.toFixed(2)+' in ±0.50':(ex?ex[0].toFixed(1)+'–'+ex[1].toFixed(1)+' in':'—'),tr=document.createElement('tr');tr.innerHTML=`<td>${name}</td><td>${m.distance.toFixed(2)} in</td><td>${label}</td><td class="${inside?'within':'outside'}">${ex?(inside?'Within':'Outside'):'No reference'}</td>`;$('#rows').appendChild(tr)}$('#stages').textContent='Completed: '+data.stages.join(' → ');$('#output').hidden=false;statusEl.textContent='Measurement complete.'}catch(e){statusEl.textContent=e.message}finally{run.disabled=false}};
 </script></body></html>
