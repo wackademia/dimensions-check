@@ -11,6 +11,7 @@ from . import classification
 from . import segmentation
 from . import landmark
 from . import utils
+from .runtime import InferenceRuntime
 
 
 class tailor:
@@ -60,6 +61,9 @@ class tailor:
         landmark_detection_model_args: Dict,
         refinement_args: Optional[Dict] = None,
         derivation_dict: Optional[Dict] = None,
+        device: str = "auto",
+        low_vram: Optional[bool] = None,
+        runtime: Optional[InferenceRuntime] = None,
     ):
         """
         Initializes the `tailor` agent with paths, model configurations, and processing flags.
@@ -89,6 +93,9 @@ class tailor:
         Raises:
             ValueError: If `do_derive` is True but `derivation_dict` is None.
         """
+        # device: auto/cuda/cpu; low_vram=None auto-enables offloading on <=4.5 GiB.
+        # A pre-selected runtime can be shared with the launcher's image-size choice.
+        self.runtime = runtime or InferenceRuntime(device, low_vram)
         # Directories
         self.input_dir = input_dir
         self.model_dir = model_dir
@@ -134,6 +141,7 @@ class tailor:
             model_path=f"{self.model_dir}/{self.classification_model_path}",
             model_class=self.classification_model_class,
             model_args=filtered_model_args,
+            device="cpu",
         )
 
         # Segmentation model setup
@@ -144,7 +152,8 @@ class tailor:
         self.segmentation_model = segmentation.load_model(
             model_path=f"{self.model_dir}/{self.segmentation_model_path}",
             model_class=self.segmentation_model_class,
-            model_args=self.segmentation_model_args.get("model_config")
+            model_args=self.segmentation_model_args.get("model_config"),
+            device="cpu",
         )
 
         # Landmark detection model setup
@@ -154,7 +163,11 @@ class tailor:
         self.landmark_detection_model = landmark.detection.load_model(
             model_path=f"{self.model_dir}/{self.landmark_detection_model_path}",
             model_class=self.landmark_detection_model_class,
+            device="cpu",
         )
+        self.runtime.prepare([
+            self.classification_model, self.segmentation_model, self.landmark_detection_model
+        ])
 
     def summary(self):
         """
@@ -215,7 +228,8 @@ class tailor:
                 - probabilities (List[float]): A list of probabilities for each class.
         """
         image_input = f"{self.input_dir}/{image}" if isinstance(image, str) else image
-        label, probablities = classification.predict(
+        label, probablities = self.runtime.run(
+            classification.predict,
             model=self.classification_model,
             image_path=image_input,
             classes=self.classes,
@@ -256,7 +270,8 @@ class tailor:
 
         # 2. Extract using the unified function and unpacked kwargs
         image_input = f"{self.input_dir}/{image}" if isinstance(image, str) else image
-        original_img, mask = segmentation.extract(
+        original_img, mask = self.runtime.run(
+            segmentation.extract,
             model=self.segmentation_model,
             image_path=image_input,
             **extraction_kwargs
@@ -290,7 +305,8 @@ class tailor:
         if isinstance(image, str):
             image = f"{self.input_dir}/{image}"
 
-        coords, maxval, detection_dict = landmark.detect(
+        coords, maxval, detection_dict = self.runtime.run(
+            landmark.detect,
             class_name=class_name,
             class_dict=self.class_dict,
             image_path=image,

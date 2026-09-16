@@ -1,0 +1,22 @@
+# Windows Python 3.11/3.12. Install CUDA wheels first with setup_gtx1050ti.ps1.
+# CUDA build suffixes prevent accidental replacement with CPU/newer CUDA wheels.
+torch==2.7.1+cu118
+torchvision==0.22.1+cu118
+numpy==2.2.6
+pandas==2.2.3
+scipy==1.15.3
+scikit-learn==1.6.1
+Pillow==11.3.0
+matplotlib==3.10.3
+transformers==4.51.3
+timm==1.0.15
+kornia==0.8.1
+einops==0.8.1
+safetensors==0.7.0
+shapely==2.1.1
+opencv-python==4.11.0.86
+tqdm==4.67.1
+requests>=2.32.5,<3
+flask>=3.1.0,<4
+cryptography>=45.0.0,<47
+huggingface-hub>=0.30,<1

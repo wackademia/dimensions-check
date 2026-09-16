@@ -19,10 +19,30 @@ from garmentiq.segmentation.model_definition.birefnet import (
     BiRefNet,
     load_birefnet_config,
 )
+from garmentiq.runtime import InferenceRuntime
 
 
-def build_agent():
+def add_runtime_arguments(parser):
+    parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
+    parser.add_argument("--low-vram", action="store_true", default=None,
+                        help="Keep only the active model on GPU; automatic for GPUs with <=4.5 GB")
+    parser.add_argument("--segmentation-size", type=int, choices=(256, 512, 768, 1024), default=None,
+                        help="Internal mask resolution; defaults to 512 in low-VRAM mode, otherwise 1024")
+
+
+def build_agent(device="auto", low_vram=None, segmentation_size=None):
+    required = ["tiny_vit_inditex_finetuned.pt", "hrnet.pth", "birefnet/model.safetensors"]
+    missing = [name for name in required if not (ROOT / "models" / name).is_file()]
+    if missing:
+        raise FileNotFoundError("Missing models: " + ", ".join(missing) +
+                                ". Run .venv\\Scripts\\python.exe scripts/download_models.py")
+    runtime = InferenceRuntime(device, low_vram)
+    size = segmentation_size if segmentation_size is not None else (512 if runtime.low_vram else 1024)
+    if size not in (256, 512, 768, 1024):
+        raise ValueError("segmentation_size must be 256, 512, 768, or 1024")
+    print(f"Inference: {runtime.device}; low VRAM: {runtime.low_vram}; segmentation: {size}px; FP32")
     return giq.tailor(
+        runtime=runtime,
         input_dir=str(ROOT),
         model_dir=str(ROOT / "models"),
         output_dir=str(ROOT / "live_output"),
@@ -44,7 +64,7 @@ def build_agent():
         segmentation_model_class=BiRefNet,
         segmentation_model_args={
             "model_config": load_birefnet_config(),
-            "resize_dim": (1024, 1024),
+            "resize_dim": (size, size),
             "normalize_mean": [0.485, 0.456, 0.406],
             "normalize_std": [0.229, 0.224, 0.225],
             "background_color": [102, 255, 102],
@@ -67,11 +87,12 @@ def main():
     parser.add_argument("--pixels-per-unit", type=float, default=None)
     parser.add_argument("--unit", default="cm")
     parser.add_argument("--class-name", choices=sorted(garment_classes), default=None)
+    add_runtime_arguments(parser)
     args = parser.parse_args()
 
     print("Loading models; this can take several minutes on CPU...")
     detector = giq.LiveDetector(
-        build_agent(),
+        build_agent(args.device, args.low_vram, args.segmentation_size),
         pixels_per_unit=args.pixels_per_unit,
         unit_name=args.unit,
         class_name=args.class_name,

@@ -120,9 +120,10 @@ def main():
     parser = argparse.ArgumentParser(description="GarmentIQ static-image upload demo")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
+    run_live.add_runtime_arguments(parser)
     args = parser.parse_args()
     print("Loading models for the original static-image pipeline...")
-    agent = run_live.build_agent()
+    agent = run_live.build_agent(args.device, args.low_vram, args.segmentation_size)
     print(f"Static demo ready: http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, threaded=True)
 

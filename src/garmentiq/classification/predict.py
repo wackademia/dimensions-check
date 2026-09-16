@@ -14,7 +14,7 @@ def predict(
     resize_dim=(120, 184),
     normalize_mean=[0.8047, 0.7808, 0.7769],
     normalize_std=[0.2957, 0.3077, 0.3081],
-    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    device=None,
     verbose=False,
 ):
     """
@@ -31,7 +31,7 @@ def predict(
         resize_dim (tuple[int, int]): Tuple indicating the dimensions to resize the image to. Default is (120, 184).
         normalize_mean (list[float]): List of mean values for normalization. Default is [0.8047, 0.7808, 0.7769].
         normalize_std (list[float]): List of standard deviation values for normalization. Default is [0.2957, 0.3077, 0.3081].
-        device (torch.device, optional): Device to run inference on. Defaults to CUDA if available, otherwise CPU.
+        device (torch.device, optional): Defaults to the model's current device.
         verbose (bool): If True, prints the predicted label and class probabilities.
 
     Raises:
@@ -68,6 +68,7 @@ def predict(
         if isinstance(image_path, str)
         else Image.fromarray(image_path.astype(np.uint8)).convert("RGB")
     )
+    device = device or next(model.parameters()).device
     image_tensor = transform(image).unsqueeze(0).to(device)  # add batch dimension
 
     # Forward pass

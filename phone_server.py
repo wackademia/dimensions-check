@@ -62,6 +62,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8443)
+    run_live.add_runtime_arguments(parser)
     parser.add_argument(
         "--http",
         action="store_true",
@@ -69,7 +70,7 @@ def main():
     )
     args = parser.parse_args()
     print("Loading GarmentIQ models. This can take about a minute on CPU...")
-    agent = run_live.build_agent()
+    agent = run_live.build_agent(args.device, args.low_vram, args.segmentation_size)
     scheme = "HTTP" if args.http else "HTTPS"
     print(f"Phone server ready on {scheme} port {args.port}")
     app.run(

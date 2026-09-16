@@ -32,7 +32,7 @@ def extract(model: torch.nn.Module, image_path, processor=None, **kwargs):
         tuple (numpy.ndarray, numpy.ndarray): The original image converted to a numpy array,
                                               and the extracted segmentation mask as a numpy array.
     """
-    device = "cuda" if next(model.parameters()).is_cuda else "cpu"
+    device = next(model.parameters()).device
     if isinstance(image_path, str):
         image = Image.open(image_path).convert("RGB")
     elif isinstance(image_path, np.ndarray):

@@ -6,7 +6,7 @@ from safetensors.torch import load_file
 
 
 def load_model(
-    model_class: Type[nn.Module], model_path: str, model_args: dict = None, **kwargs
+    model_class: Type[nn.Module], model_path: str, model_args: dict = None, device=None, **kwargs
 ):
     """
     Loads a PyTorch model from a local checkpoint and prepares it for inference.
@@ -45,7 +45,7 @@ def load_model(
             raise TypeError("model_args must be a dictionary or a configuration object.")
     # ---------------------------
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     sig = inspect.signature(model_class.__init__)
     valid_params = set(sig.parameters.keys())
@@ -60,12 +60,12 @@ def load_model(
         filtered_args = model_args
 
     # ... [Keep the rest of your loading logic exactly the same] ...
-    model = model_class(**filtered_args).to(device)
+    model = model_class(**filtered_args)
 
     if model_path.endswith(".safetensors"):
-        state_dict = load_file(model_path, device=device)
+        state_dict = load_file(model_path, device="cpu")
     else:
-        state_dict = torch.load(model_path, map_location=device, weights_only=True)
+        state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
 
     new_state_dict = {
         k.removeprefix("module.").removeprefix("model."): v
@@ -73,6 +73,7 @@ def load_model(
     }
 
     model.load_state_dict(new_state_dict, strict=False)
+    model.to(device)
     model.eval()
 
     return model

@@ -97,6 +97,7 @@ def detect(
         image_path, scale_std, resize_dim, normalize_mean, normalize_std
     )
 
+    input_tensor = input_tensor.to(next(model.parameters()).device)
     with torch.no_grad():
         np_output_heatmap = model(input_tensor).detach().cpu().numpy()
 

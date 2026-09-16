@@ -1,5 +1,21 @@
 # GarmentIQ: Automated Garment Measurement for Fashion Retail
 
+## This fork: Size Check on a GTX 1050 Ti
+
+For a fresh Windows clone, follow [the GTX 1050 Ti setup guide](docs/GTX1050TI_SETUP.md).
+Install 64-bit Python 3.11 and a compatible NVIDIA driver, then run
+`setup_gtx1050ti.bat` from this folder. It installs the CUDA 11.8 dependency profile,
+downloads and checks the models, and verifies GPU operation.
+
+Run `run_static_demo.bat` for ruler-calibrated photo uploads, or `run_phone_pc.bat`
+for the camera interface on the PC. Open `http://127.0.0.1:8080` after startup.
+Both support `--device cpu`, `--device cuda`, `--low-vram`, and
+`--segmentation-size 512`. GPUs with about 4 GB VRAM automatically use a smaller
+segmentation input and move one model at a time to the GPU. See the guide for
+the smoke test, model copying, LAN phone use, and troubleshooting.
+
+The original upstream package documentation follows.
+
 [🌐 Official website](https://garmentiq.ly.gd.edu.kg/) | [📖 Documentation](https://garmentiq.ly.gd.edu.kg/documentation/) | [⚙️ Web pipeline](https://garmentiq.ly.gd.edu.kg/application/) | [🪄 MagicBox](https://garmentiq.ly.gd.edu.kg/documentation/magicbox/) | [📄 Paper](https://archive.gd.edu.kg/abs/20250525121523/)
 
 **Free & Open Source. Precise and flexible garment measurements from images - no tape measures, no delays, just fashion - forward automation.**
