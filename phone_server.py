@@ -56,7 +56,7 @@ def render_dimensions_table(measurements, decision, garment_class):
     decision = decision or {}
     matched_reference = decision.get("reference")
     # Uncertain results still get a comparison column (the closest size, even though it
-    # didn't match on every dimension) instead of a blank "—" with no data to review.
+    # didn't produce exactly one waist match) instead of a blank "—" with no data to review.
     reference = matched_reference or decision.get("closest_reference") or {}
     if matched_reference:
         reference_column = "Reference"

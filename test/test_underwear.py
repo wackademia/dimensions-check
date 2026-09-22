@@ -40,15 +40,15 @@ class SizeTests(unittest.TestCase):
 
     def test_tolerance_boundary_and_no_forced_nearest_size(self):
         sample = measurements("M")
-        sample["waist"]["distance"] += .50
+        sample["waist"]["distance"] -= .50
         self.assertEqual(estimate_size(sample)["size"], "M")
-        sample["waist"]["distance"] += .01
+        sample["waist"]["distance"] -= .01
         self.assertIsNone(estimate_size(sample)["size"])
 
-    def test_all_dimensions_must_match(self):
+    def test_non_waist_dimensions_do_not_affect_size(self):
         sample = measurements("XL")
         sample["full length"]["distance"] = 25
-        self.assertEqual(estimate_size(sample)["status"], "uncertain")
+        self.assertEqual(estimate_size(sample)["size"], "XL")
 
     def test_ambiguous_is_not_forced(self):
         sample = {key: {"distance": (REFERENCES["L"][key] + REFERENCES["XL"][key]) / 2, "unit": "in"} for key in REFERENCES["L"]}
@@ -56,7 +56,7 @@ class SizeTests(unittest.TestCase):
 
     def test_uncertain_result_still_reports_the_closest_size(self):
         sample = measurements("XL")
-        sample["full length"]["distance"] = 25
+        sample["waist"]["distance"] = 25
         result = estimate_size(sample)
         self.assertEqual(result["status"], "uncertain")
         self.assertIsNone(result["reference"])
@@ -73,7 +73,7 @@ class SizeTests(unittest.TestCase):
     def test_invalid_or_missing_measurements(self):
         for value in (float("nan"), float("inf"), 0, -1, "14", True, None):
             sample = measurements("M")
-            sample["hips"]["distance"] = value
+            sample["waist"]["distance"] = value
             self.assertIsNone(estimate_size(sample)["size"])
         sample = measurements("M")
         sample["waist"]["unit"] = "px"

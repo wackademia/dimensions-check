@@ -107,11 +107,12 @@ body measurements or waist/hip circumferences. XXL is labelled `2XL`.
 | 2XL | 12.28 | 12.39 | 18.09 | 16.84 |
 
 The code preserves these values exactly, including non-monotonic lengths.
-It accepts a size only if **all four measurements** are within **±0.50 inches**
-of exactly one reference. No match, multiple matches or invalid measurements
+It accepts a size only if the **flat waist measurement** is within **±0.50 inches**
+of exactly one reference. No match, multiple matches or an invalid waist measurement
 produce **Uncertain**, not a forced nearest size. The allowance is provisional,
 not a manufacturing tolerance or statistical confidence interval. Candidate
-distances in the API are RMSE in inches, not confidence percentages.
+distances in the API use the legacy `rmse_in` field name for compatibility, but
+the value is now the absolute waist delta in inches, not a confidence percentage.
 
 References and the allowance live in
 `src/garmentiq/underwear_sizes.py` (`REFERENCES`, `DEFAULT_TOLERANCE_IN`). Restart
@@ -148,7 +149,7 @@ The old photo-upload page retains its existing manual size-comparison UI.
   dimensions with a ruler/tape and record wrong-size and uncertain outcomes.
   Do not widen tolerances just to turn failures into matches. **Uncertain is an
   expected, common outcome of this design** — it means no single reference
-  matched all four dimensions within tolerance, not that something is broken.
+  matched the waist width within tolerance, not that something is broken.
   The result panel and saved snapshot both show the *closest* size and its
   per-dimension deltas even when uncertain, specifically so a manual reviewer
   has real numbers to judge from instead of a blank "no match."

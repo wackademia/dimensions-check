@@ -1004,14 +1004,13 @@ These four numbers per size are **measured, laid-flat garment dimensions in inch
 team's own physical reference samples — not body measurements, not an industry sizing chart. Given
 a fresh `measurements` dict (four named distances, already converted to inches), `estimate_size`:
 
-1. Validates every one of the four expected measurement names is present, in inches, and a finite
-   positive number — any failure returns `uncertain(...)` immediately, never a guess.
-2. For each of the four references, computes the per-dimension delta and an RMSE-in-inches
-   distance, and flags it `within_tolerance` only if **all four** deltas are within
-   `± tolerance_in` (default 0.50").
+1. Validates that the waist measurement is present, in inches, and a finite positive number — any
+   failure returns `uncertain(...)` immediately, never a guess.
+2. For each size reference, computes the waist delta and flags it `within_tolerance` only if that
+   delta is within `± tolerance_in` (default 0.50").
 3. Sorts candidates by RMSE (closest first) purely for the response payload / UI's reference
    column — **the accept/reject decision is never "pick the nearest," only "is exactly one
-   candidate within tolerance on every dimension."**
+   candidate within tolerance on waist width."**
 4. Exactly one match → `{"status": "matched", "size": "L", ...}`. Zero or more than one match →
    `{"status": "uncertain", "size": None, ...}` (with a reason distinguishing "no reference
    matches" from "measurements overlap multiple references").
@@ -1027,7 +1026,7 @@ recheck the reference values themselves.
 ### 8.5 Giving "Uncertain" a comparison instead of a blank column
 
 Because the design above rejects a nearest-neighbour guess on purpose, **"Uncertain" is a common,
-expected outcome** — it just means no single reference matched on all four dimensions, not that
+expected outcome** — it just means no single reference matched the waist width, not that
 something malfunctioned. That's easy to mistake for a bug when the on-screen result shows real,
 plausible-looking measurements next to the word "Uncertain" with nothing to compare them against.
 `estimate_size()`'s return value always includes the closest candidate regardless of whether it

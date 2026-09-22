@@ -15,6 +15,7 @@ REFERENCES = {
     "2XL": {"front rise": 12.28, "full length": 12.39, "hips": 18.09, "waist": 16.84},
 }
 DEFAULT_TOLERANCE_IN = 0.50  # Provisional measurement allowance, not a factory specification.
+SIZE_MEASUREMENT = "waist"
 
 
 class InspectionRejected(ValueError):
@@ -26,40 +27,39 @@ def uncertain(reason):
 
 
 def estimate_size(measurements, tolerance_in=DEFAULT_TOLERANCE_IN):
-    """Accept exactly one reference within tolerance on ALL four dimensions.
+    """Accept exactly one reference whose flat waist is within tolerance.
 
     A nearest neighbour alone is not sufficient: unknown sizes must be rejected.
-    RMSE is reported as a distance in inches, never as a probability/confidence.
+    The reported distance is the absolute waist delta in inches, never a
+    probability or confidence score.
     """
     if not math.isfinite(tolerance_in) or tolerance_in <= 0:
         raise ValueError("Size tolerance must be finite and positive")
-    values = {}
-    for name in REFERENCES["M"]:
-        value = measurements.get(name, {})
-        distance = value.get("distance")
-        if (value.get("unit") != "in" or isinstance(distance, bool)
-                or not isinstance(distance, (int, float))
-                or not math.isfinite(distance) or distance <= 0):
-            return uncertain(f"Missing or invalid calibrated measurement: {name}")
-        values[name] = distance
+    value = measurements.get(SIZE_MEASUREMENT, {})
+    distance = value.get("distance")
+    if (value.get("unit") != "in" or isinstance(distance, bool)
+            or not isinstance(distance, (int, float))
+            or not math.isfinite(distance) or distance <= 0):
+        return uncertain("Missing or invalid calibrated measurement: waist")
+
     candidates = []
     for size, reference in REFERENCES.items():
-        deltas = {name: values[name] - expected for name, expected in reference.items()}
+        delta = distance - reference[SIZE_MEASUREMENT]
         candidates.append({
             "size": size,
-            "rmse_in": math.sqrt(sum(d * d for d in deltas.values()) / len(deltas)),
-            "within_tolerance": all(abs(d) <= tolerance_in + 1e-9 for d in deltas.values()),
-            "deltas_in": deltas,
+            "rmse_in": abs(delta),
+            "within_tolerance": abs(delta) <= tolerance_in + 1e-9,
+            "deltas_in": {SIZE_MEASUREMENT: delta},
         })
     candidates.sort(key=lambda candidate: candidate["rmse_in"])
     matches = [candidate for candidate in candidates if candidate["within_tolerance"]]
     if len(matches) == 1:
         result = {"status": "matched", "size": matches[0]["size"],
-                  "reason": "All four measurements match one supplied reference."}
+                  "reason": "Waist measurement matches one supplied reference."}
     elif matches:
         result = uncertain("Measurements overlap multiple references; inspect manually.")
     else:
-        result = uncertain("No reference matches all four measurements; inspect manually.")
+        result = uncertain("Waist does not match any reference; inspect manually.")
     closest = candidates[0]
     return {**result, "tolerance_in": tolerance_in, "candidates": candidates,
             "reference": REFERENCES[result["size"]] if result["size"] else None,
