@@ -9,56 +9,33 @@ export function changedFraction(a, b, threshold = 22) {
   return changed / (a.length / 4);
 }
 
-export class InspectionGate {
-  constructor({settleMs = 1250, emptyMs = 750} = {}) {
+// Waits for a manually-placed item to stop moving before a single inspection capture.
+// The operator only presses "Start inspection" once an item is already in view, so
+// unlike the old always-on InspectionGate this makes no attempt to detect presence or
+// removal itself — a bad or empty frame is instead rejected by the server's own
+// frame-quality checks (underwear_sizes.check_inspection_mask/landmarks) after capture.
+export class SettleGate {
+  constructor({settleMs = 1250} = {}) {
     this.settleMs = settleMs;
-    this.emptyMs = emptyMs;
-    this.token = 0;
-    this.armed = true;
-    this.valid = false;
     this.previous = null;
     this.anchor = null;
     this.stableSince = null;
-    this.emptySince = null;
   }
-  invalidate() { if (this.valid) this.token++; this.valid = false; }
-  retry() {
-    this.invalidate();
-    this.armed = true;
-    this.stableSince = null;
-    this.anchor = null;
-  }
-  accepts(token) { return this.valid && token === this.token; }
-  update(sample, background, now) {
-    const foreground = changedFraction(sample, background);
+  update(sample, now) {
     const motion = changedFraction(sample, this.previous);
     // Anchor comparison also rejects slow cumulative movement between probes.
     const moving = motion > .015 || (this.anchor && changedFraction(sample, this.anchor) > .015);
     this.previous = sample;
-    if (foreground < .05) {
-      this.invalidate();
-      this.anchor = null;
-      this.stableSince = null;
-      this.emptySince ??= now;
-      if (now - this.emptySince >= this.emptyMs) this.armed = true;
-      return {state: 'empty', foreground, motion};
-    }
-    this.emptySince = null;
     if (moving) {
-      this.invalidate();
       this.stableSince = null;
       this.anchor = null;
-      return {state: this.armed ? 'moving' : 'clear', foreground, motion};
+      return {state: 'moving', motion};
     }
-    if (!this.armed) return {state: this.valid ? 'holding' : 'clear', foreground, motion};
     if (this.stableSince === null) {
       this.stableSince = now;
       this.anchor = sample;
     }
-    if (now - this.stableSince < this.settleMs) return {state: 'settling', foreground, motion};
-    this.armed = false;
-    this.valid = true;
-    this.token++;
-    return {state: 'capture', token: this.token, foreground, motion};
+    if (now - this.stableSince < this.settleMs) return {state: 'settling', motion};
+    return {state: 'ready', motion};
   }
 }

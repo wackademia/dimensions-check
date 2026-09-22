@@ -60,8 +60,13 @@ def estimate_size(measurements, tolerance_in=DEFAULT_TOLERANCE_IN):
         result = uncertain("Measurements overlap multiple references; inspect manually.")
     else:
         result = uncertain("No reference matches all four measurements; inspect manually.")
+    closest = candidates[0]
     return {**result, "tolerance_in": tolerance_in, "candidates": candidates,
-            "reference": REFERENCES[result["size"]] if result["size"] else None}
+            "reference": REFERENCES[result["size"]] if result["size"] else None,
+            # Always populated (even when uncertain) so a manual reviewer sees how close the
+            # nearest size actually was, instead of a blank comparison column.
+            "closest_size": closest["size"], "closest_reference": REFERENCES[closest["size"]],
+            "closest_deltas_in": closest["deltas_in"], "closest_rmse_in": closest["rmse_in"]}
 
 
 def check_inspection_mask(mask):

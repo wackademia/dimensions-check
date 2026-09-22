@@ -46,7 +46,7 @@ runnable products:
 | Product | Entry point | What it does |
 | --- | --- | --- |
 | Static photo upload demo | [`static_image_server.py`](../static_image_server.py) | Upload one photo of a garment + ruler, calibrate by clicking, get measurements in inches. |
-| Live camera / phone demo | [`phone_server.py`](../phone_server.py) | Browser-based live camera feed, ruler calibration, and (new) **automatic paused-item underwear size inspection** for a production line. |
+| Live camera / phone demo | [`phone_server.py`](../phone_server.py) | Browser-based live camera feed, ruler calibration, and (new) **manual, button-triggered underwear size inspection** for a production line. |
 | OpenCV desktop window | [`run_live.py`](../run_live.py) | A local webcam window with live-drawn measurements, no browser needed. |
 
 The fork's other major addition is **`src/garmentiq/underwear_sizes.py`**: a reference-matching
@@ -89,7 +89,7 @@ dimensions-check/
 ├── phone_web/                   Frontend for phone_server.py (live camera UI)
 │   ├── index.html               Page layout/controls
 │   ├── app.js                   Camera, calibration clicks, ROI, results rendering, HTTP calls
-│   ├── inspection.mjs           InspectionGate: pure state machine deciding when to auto-capture
+│   ├── inspection.mjs           SettleGate: pure state machine deciding when a placed item is stable
 │   └── style.css
 ├── static_image_web/index.html  Single-file frontend for static_image_server.py
 │
@@ -495,7 +495,8 @@ request/response shape before reading `phone_server.py`.
   `underwear_sizes.py`, so the frontend's reference table is always in sync with the server
   without hardcoding numbers in JS.
 - **`POST /measure`** — the single endpoint used by every camera frame, in both "measure one
-  frame" mode and automatic underwear-inspection mode. Full request/response walkthrough in
+  frame" mode and underwear-inspection mode (both are manually triggered by a button press —
+  see Section 8). Full request/response walkthrough in
   [Section 6](#6-deep-dive-how-the-live-video-pipeline-works).
 
 Two details worth knowing up front:
@@ -509,21 +510,25 @@ Two details worth knowing up front:
   HTTPS) or the default HTTPS with an ad-hoc self-signed cert (`ssl_context="adhoc"` — used by
   `run_phone_server.bat` so a **phone** on the LAN can get camera permission, which browsers only
   grant on `localhost` or a secure origin).
+- `main()` blocks on a terminal `input()` prompt (`prompt_snapshot_dir()`) **before** loading any
+  models, asking where to save inspection snapshots (default: `./snapshots`, created if missing).
+  This is deliberately interactive rather than a CLI flag, since the server tends to be started
+  fresh on whatever PC is running the line that day. See Section 6.5 for what gets saved there.
 
 ### 5.4 `phone_web/` — the live camera frontend
 
 Four files, no build step, loaded directly by Flask's static file serving:
 
 - **`index.html`** — layout: a `<video>` + `<canvas overlay>` pair, mode selector
-  (underwear-automatic vs. single-frame-measure), the three setup buttons (Calibrate / Set area /
-  Capture empty area), Start/Stop/Reinspect controls, and the results panel.
+  (underwear vs. single-frame-measure), the two setup buttons (Calibrate / Set area), a single
+  **Start inspection** button, and the results panel.
 - **`app.js`** — all UI logic and state: camera enumeration/switching, freeze-frame click capture
-  for both calibration and ROI selection, the polling loop that drives automatic inspection, and
-  rendering results. Deep dive in Sections 6–7.
-- **`inspection.mjs`** — `InspectionGate`, a **pure, dependency-free state machine** (exported so
+  for both calibration and ROI selection, the settle-then-capture flow behind **Start
+  inspection**, and rendering results. Deep dive in Sections 6–7.
+- **`inspection.mjs`** — `SettleGate`, a **pure, dependency-free state machine** (exported so
   it can be unit-tested with plain Node — see [`test/test_inspection.mjs`](../test/test_inspection.mjs))
-  that decides *when* a paused item is stable enough to submit for measurement. Deep dive in
-  [Section 8](#8-deep-dive-automated-underwearproduction-line-inspection).
+  that decides *when* a manually-placed item is stable enough to submit for measurement. Deep
+  dive in [Section 8](#8-deep-dive-automated-underwearproduction-line-inspection).
 - **`style.css`** — presentation only.
 
 ### 5.5 `static_image_web/index.html`
@@ -578,7 +583,7 @@ ruler's pixels-per-inch value valid, see Section 7). That canvas is then encoded
 and POSTed as multipart form data:
 
 ```javascript
-async function inspect(token = null) {
+async function captureAndMeasure() {
   ...
   const shot = snapshot();
   const blob = await new Promise(resolve => shot.toBlob(resolve, 'image/jpeg', .92));
@@ -592,12 +597,13 @@ async function inspect(token = null) {
 }
 ```
 
-There are exactly two ways `inspect()` gets called:
+There are exactly two ways `captureAndMeasure()` gets called, both manually triggered by the
+operator (Section 8 covers why there is no longer any automatic, hands-free detection path):
 
-- **Manually** — the "Measure one frame" button, for single-shot measurement of any of the 9
-  garment types (non-underwear mode).
-- **Automatically** — the `InspectionGate` state machine (Section 8) calling `inspect(token)`
-  the instant it decides a placed item has been still long enough.
+- **"Measure one frame"** — calls it immediately on click, for single-shot measurement of any of
+  the 9 garment types (non-underwear mode).
+- **"Start inspection"** (underwear mode) — first waits for the `SettleGate` state machine
+  (Section 8) to report the placed item has been still for about 1.25 seconds, then calls it.
 
 Only one request is ever in flight (`busy` flag); a five-minute `AbortController` timeout guards
 against a hung request without blocking the UI forever.
@@ -684,7 +690,7 @@ time. The `run_live.build_agent()` configuration used by every app in this repo 
 called **only** when `inspect_underwear=True`, and they `raise InspectionRejected(...)` rather
 than returning a value — `phone_server.py`'s `/measure` handler catches that specific exception
 and turns it into a normal `200` response with `size_estimate={"status": "uncertain", ...}` rather
-than an HTTP error, so a bad automatic frame degrades gracefully instead of erroring the page:
+than an HTTP error, so a bad captured frame degrades gracefully instead of erroring the page:
 
 ```python
 try:
@@ -719,11 +725,42 @@ return jsonify(
 )
 ```
 
-`app.js`'s `renderResult()` puts that image into the results `<img>`, fills the measurements
-table, and — critically — **only after re-checking `current()`**, a guard that compares the
-request's captured epoch/gate-token against the live ones. This is what stops a slow response for
-an item that has since been removed from ever being shown as "the current result" — see Section 8
-for exactly how that token system works.
+`captureAndMeasure()` (Section 6.1) only calls `app.js`'s `renderResult()` — which puts that image
+into the results `<img>` and fills the measurements table — **after re-checking `current()`**, a
+guard comparing the request's captured `epoch` against the live one. This is what stops a slow
+response from ever overwriting the screen after a mode switch, recalibration, or camera reset
+invalidated it in the meantime; see Section 8 for what bumps `epoch` and why a token system is no
+longer needed now that captures are one-at-a-time and operator-triggered.
+
+### 6.5 Saved inspection snapshots (disk record, underwear mode only)
+
+Separately from the JSON response above, `/measure` also writes a **permanent file to disk** for
+every underwear-mode request that produces real measurements (i.e. not rejected by
+`InspectionRejected`):
+
+```python
+# phone_server.py
+if underwear and measurements and snapshot_dir:
+    try:
+        saved_path = save_inspection_snapshot(annotated, measurements, decision, label)
+        app.logger.info("Saved inspection snapshot to %s", saved_path)
+    except Exception:
+        app.logger.exception("Failed to save inspection snapshot")
+```
+
+`save_inspection_snapshot()` builds one JPEG containing **two things stacked vertically**: the same
+annotated photo returned to the browser, and a rendered table (via Pillow's `ImageDraw`, not HTML)
+listing garment class, the size decision/reason, and each measurement's value against its matching
+reference and the delta between them (`render_dimensions_table()`). The filename encodes the
+timestamp, garment class and decision, e.g. `20260922_172320_shorts_L.jpg`, so a folder of these is
+sortable and greppable without opening each one.
+
+This is intentionally **best-effort and non-fatal** — `snapshot_dir` is `None` until `main()`'s
+startup prompt sets it (so it's a no-op under `test_underwear.py`'s `app.test_client()`, which
+never calls `main()`), and any exception while composing/writing the file is logged, not raised, so
+a full/missing disk never breaks the operator-facing response. It only fires in underwear mode
+because that's the only mode with a size decision and reference table to put in the file; plain
+"measure one frame" requests are not saved.
 
 ---
 
@@ -799,60 +836,49 @@ cropped, the calibration would silently become wrong; this invariant is why the 
 The default ROI (before the operator sets one) is the whole camera frame:
 `roi = {x: 0, y: 0, w: video.videoWidth, h: video.videoHeight}` (set in `resetSetup()`).
 
-### 7.3 The empty-area reference
+### 7.3 What invalidates calibration, and how the page reacts
 
-"3. Capture empty inspection area" takes one more RGB sample — this time from the small,
-downscaled `probe` canvas (96×72, see Section 8.1) rather than the full ROI — with the ruler,
-garment, and hands all removed:
-
-```javascript
-$('background').onclick = () => {
-  background = sample(); epoch++; clearResult('Ready');
-  ...
-};
-```
-
-This `background` sample is the baseline every later frame is compared against to decide
-*"is anything even in the inspection area right now?"* — it is what `InspectionGate.update()`'s
-`foreground` fraction is measured relative to (Section 8.1). It is intentionally captured
-**separately from and after** ROI selection, because the ROI itself changes what pixels are being
-compared; **any change to calibration or the ROI clears it** (`freezeFor()` sets
-`background = null`), forcing the operator to recapture it, since an empty-reference from the old
-area/framing would silently make presence detection wrong.
-
-### 7.4 What invalidates calibration, and how the page reacts
-
-Calibration state (`scale`, `roi`, `background`) lives only in page memory — nothing persists
-across a reload. `app.js` watches for several conditions that make the existing calibration
-untrustworthy and forces a reset back to "recalibrate" (`resetSetup(message)`), each pointing the
-operator at a specific message:
+Calibration state (`scale`, `roi`) lives only in page memory — nothing persists across a reload.
+`app.js` watches for several conditions that make the existing calibration untrustworthy and
+forces a reset back to "recalibrate" (`resetSetup(message)`), each pointing the operator at a
+specific message:
 
 | Trigger | Detected by | Message |
 | --- | --- | --- |
 | Camera resolution changes | `video`'s `resize` event | "Camera resolution changed. Recalibrate..." |
-| Video frozen / stopped advancing | `tick()` comparing `video.currentTime` across polls | "Camera feed froze. Check the camera..." |
+| Video frozen / stopped advancing | `startInspection()`'s settle-wait interval comparing `video.currentTime` across ticks — only checked while a capture is in progress, not continuously | "Camera feed froze. Check the camera..." |
 | Camera track ends (unplugged) | `stream.getVideoTracks()[0].onended` | "Camera disconnected. Reload this page..." |
-| Page hidden (tab switched away) | `visibilitychange` | Inspection paused, not just calibration |
+| Page hidden (tab switched away) | `visibilitychange` | Aborts any in-progress settle wait, not calibration itself |
 
 Physical events the page **cannot** detect — someone bumping the camera, changing zoom, moving the
 belt height, or changing lighting — are exactly why
-[`docs/LIVE_PRODUCTION_LINE.md`](LIVE_PRODUCTION_LINE.md) tells operators to manually stop and
-redo calibration + empty-capture after any such change. This is a real operational gap, not an
-oversight to silently "fix" — flag it in training material for whoever runs the line.
+[`docs/LIVE_PRODUCTION_LINE.md`](LIVE_PRODUCTION_LINE.md) tells operators to manually recalibrate
+after any such change. This is a real operational gap, not an oversight to silently "fix" — flag
+it in training material for whoever runs the line.
 
 ---
 
 ## 8. Deep dive: automated underwear/production-line inspection
 
 This is the newest feature in the fork (see the `LIVE_PRODUCTION_LINE.md` guide for the operator
-POV). Two halves cooperate: a **browser-side trigger** (when is an item still enough to measure?)
-and a **server-side reference matcher** (given real measurements, what size — if any — do they
-match?).
+POV). It is a **manual, one-item-at-a-time** flow, not a hands-free conveyor watcher: the operator
+places an item, presses **Start inspection**, and the page waits briefly for the item to stop
+moving before submitting it. Two halves cooperate: a **browser-side stillness check** (has the
+placed item stopped moving?) and a **server-side reference matcher** (given real measurements,
+what size — if any — do they match?).
 
-### 8.1 Browser side: presence and motion detection
+An earlier version of this feature used a continuously-polling `InspectionGate` that tried to
+auto-detect when an item was placed and removed from an empty inspection area. That was replaced
+by the current, simpler design: the operator already knows when an item is present (they placed
+it), so the browser only needs to confirm it has stopped moving, and the server's own
+frame-quality checks (Section 8.3) reject a genuinely empty or bad frame after the fact. There is
+no more "empty reference" capture step, no presence detection, and no result that auto-clears —
+the displayed result stays until the *next* "Start inspection" press overwrites it.
 
-Every 250 ms while inspection is running, `tick()` samples the inspection area down to a tiny
-96×72 probe canvas and compares it against two baselines:
+### 8.1 Browser side: the stillness check
+
+Once "Start inspection" is pressed, `startInspection()` polls the inspection area every 250 ms,
+down to a tiny 96×72 probe canvas, and compares each sample only against the *previous* one:
 
 ```javascript
 // phone_web/inspection.mjs
@@ -868,65 +894,49 @@ export function changedFraction(a, b, threshold = 22) {
 
 This is a per-pixel average-RGB-difference test (threshold 22/255) counted as a **fraction of
 changed pixels** across the whole probe — deliberately crude/cheap so it can run 4×/second in
-plain JavaScript with no model inference. Two such fractions drive the state machine:
+plain JavaScript with no model inference. `motion = changedFraction(sample, previous)` — how
+different is the area from the *previous* probe (250 ms ago)? > 1.5% means "it's still moving." An
+**anchor** sample (captured the instant something first looked stable) is also compared against
+every subsequent probe, so slow cumulative drift across many small steps — which frame-to-frame
+comparison alone would miss — still counts as motion. Unlike the old gate, there is no
+`background`/`foreground` comparison at all: this module has no opinion on whether anything is
+actually present, only on whether the frame is holding still.
 
-- **`foreground = changedFraction(sample, background)`** — how different is the area from the
-  captured *empty* reference? ≥ 5% means "something is here."
-- **`motion = changedFraction(sample, previous)`** — how different is the area from the *previous*
-  probe (250 ms ago)? > 1.5% means "it's still moving." An **anchor** sample (captured the instant
-  something first looked stable) is also compared against every subsequent probe, so slow
-  cumulative drift across many small steps — which frame-to-frame comparison alone would miss —
-  still counts as motion.
+### 8.2 `SettleGate` — the state machine
 
-### 8.2 `InspectionGate` — the state machine
-
-[`phone_web/inspection.mjs`](../phone_web/inspection.mjs)'s `InspectionGate.update()` turns those
-two fractions into one of six states, called once per 250 ms tick:
+[`phone_web/inspection.mjs`](../phone_web/inspection.mjs)'s `SettleGate.update()` turns that motion
+fraction into one of three states:
 
 ```text
-        empty (<5% foreground)
-          │  garment placed
-          ▼
-   armed? ──no──► clear (already captured this item; wait for it to be removed)
-     │yes
-     ▼
    moving (>1.5% change vs previous OR anchor)
      │ stops moving
      ▼
    settling (stable, but < 1250 ms so far)
      │ 1250 ms of continuous stillness
      ▼
-   capture  ──► inspect(token) fires, armed=false, valid=true
-     │
-     ▼
-   holding (still present, already captured — waiting for removal)
-     │ area goes empty for ≥ 750 ms
-     ▼
-   armed again (empty state, ready for the next item)
+   ready  ──► captureAndMeasure() fires
 ```
 
-Two invariants matter for correctness:
+`startInspection()` (`phone_web/app.js`) creates a **fresh `SettleGate` per button press** — it is
+used for exactly one settle-then-capture cycle and then discarded, so there is no `armed`/`valid`
+state or token bookkeeping to reset between items the way the old gate needed. It maps each
+returned `state` to a status message, and — only on `state === 'ready'` — clears the polling
+interval and calls `captureAndMeasure()` (Section 6.1). Because only one settle-wait can be running
+at a time (the button is disabled the instant it's pressed, via the `busy` flag), there is no
+"model busy, retry the next stillness period" case to handle either — that was only needed when a
+continuously-running gate could fire a capture while a previous one was still in flight.
 
-- **Only one `capture` fires per placed item.** The instant `capture` fires, `armed` flips to
-  `false`; every subsequent tick while the same item sits there reports `holding` (or `clear` if
-  it moves), never a second `capture` — that's what stops a still-sitting item from being
-  re-submitted every 250 ms.
-- **Tokens invalidate stale results.** Every accepted capture increments `this.token`; `accepts(token)`
-  checks both `valid` and an exact token match. Any movement (`invalidate()`) or a manual retry
-  (`retry()`) bumps `armed`/clears `valid` and increments the token again, so a result that arrives
-  late from the server for an item that has since moved or been swapped is rejected by `app.js`'s
-  `current()` check (Section 6.4) rather than shown as if it belonged to whatever is now in frame.
-
-`app.js`'s `tick()` is the glue: it calls `gate.update(sample, background, now)`, maps the returned
-`state` to a status message for the operator, and — only on `state === 'capture'` — calls
-`inspect(state.token)`; if the model is still busy with a previous request it instead calls
-`gate.retry()` so the *next* stillness period gets a fresh chance rather than being silently
-dropped.
+`epoch` still exists and still guards `captureAndMeasure()`'s `current()` check (Section 6.4), but
+it now protects against a narrower set of events: a mid-wait or mid-request setup change
+(recalibration, camera swap/disconnect/resolution change, or the tab being hidden — see
+`abortInspection()` in `app.js`) invalidating a cycle that's already running, rather than against
+an auto-detected item swap.
 
 ### 8.3 Server side: rejecting bad frames before measuring
 
-Even a "stable" frame per the browser's cheap RGB heuristic might not actually be a clean,
-correctly laid-out garment. [`src/garmentiq/underwear_sizes.py`](../src/garmentiq/underwear_sizes.py)
+Even a frame the browser considers "still" might not actually contain a clean, correctly laid-out
+garment — the stillness check (Section 8.1) has no idea what's in view, only whether it's moving.
+[`src/garmentiq/underwear_sizes.py`](../src/garmentiq/underwear_sizes.py)
 adds two model-informed gates, both raising `InspectionRejected` (caught in `phone_server.py` and
 turned into an "uncertain" result rather than an error — Section 6.3):
 
@@ -1014,6 +1024,40 @@ by widening the tolerance** — that's explicitly called out as an anti-pattern 
 `LIVE_PRODUCTION_LINE.md`; instead treat it as a real manual-review case, or (if it's systematic)
 recheck the reference values themselves.
 
+### 8.5 Giving "Uncertain" a comparison instead of a blank column
+
+Because the design above rejects a nearest-neighbour guess on purpose, **"Uncertain" is a common,
+expected outcome** — it just means no single reference matched on all four dimensions, not that
+something malfunctioned. That's easy to mistake for a bug when the on-screen result shows real,
+plausible-looking measurements next to the word "Uncertain" with nothing to compare them against.
+`estimate_size()`'s return value always includes the closest candidate regardless of whether it
+matched, so both the UI and the saved snapshot can show *something* to reason from:
+
+```python
+closest = candidates[0]  # candidates is already sorted by rmse_in ascending
+return {**result, "tolerance_in": tolerance_in, "candidates": candidates,
+        "reference": REFERENCES[result["size"]] if result["size"] else None,
+        "closest_size": closest["size"], "closest_reference": REFERENCES[closest["size"]],
+        "closest_deltas_in": closest["deltas_in"], "closest_rmse_in": closest["rmse_in"]}
+```
+
+`reference`/`size`/`status` keep their original meaning (matched-or-nothing) so existing callers
+and tests are unaffected; the `closest_*` keys are additive and always populated. Both consumers
+use the same fallback — prefer the matched `reference`, otherwise fall back to `closest_reference`
+and label it as unmatched:
+
+- **`phone_web/app.js`'s `renderResult()`** relabels the results table's reference column header to
+  `Closest: L (unmatched)` and shows each measurement's delta from that closest size, instead of a
+  bare `—`.
+- **`phone_server.py`'s `render_dimensions_table()`** (Section 6.5) does the same for the saved
+  snapshot JPEG, so the permanent record on disk carries the same comparison data an operator sees
+  live.
+
+If this doesn't turn out to be enough — e.g. real production garments consistently miss every
+reference by a similar amount — the next lever is `DEFAULT_TOLERANCE_IN` or the `REFERENCES` values
+themselves (Section 12's "Change the underwear size references or tolerance" recipe), not silently
+loosening the matching logic in code.
+
 ---
 
 ## 9. Deep dive: GPU / device management
@@ -1092,7 +1136,7 @@ condensed map so you know which document to open for what:
 | Run the static photo-upload demo | `.\run_static_demo.bat` → `http://127.0.0.1:8080` |
 | Run the live camera demo on the same PC | `.\run_phone_pc.bat` → `http://127.0.0.1:8080` |
 | Run the live camera demo for a phone on the LAN | `.\run_phone_server.bat` → `https://<PC-LAN-IP>:8443` |
-| Operate the paused-item underwear inspection station (calibration steps, station setup, gap timing) | [`docs/LIVE_PRODUCTION_LINE.md`](LIVE_PRODUCTION_LINE.md) |
+| Operate the underwear inspection station (calibration steps, station setup, one-press-per-item flow) | [`docs/LIVE_PRODUCTION_LINE.md`](LIVE_PRODUCTION_LINE.md) |
 | Re-download or verify model weight checksums | `.\.venv\Scripts\python.exe scripts\download_models.py` |
 | Run a full GPU + pipeline smoke test | `.\.venv\Scripts\python.exe scripts\check_runtime.py --require-cuda --smoke` |
 
@@ -1118,7 +1162,7 @@ Two scripts worth understanding directly rather than just running:
 | --- | --- | --- |
 | [`test/test_underwear.py`](../test/test_underwear.py) | `python -m unittest` | `estimate_size` reference matching (exact matches, tolerance boundaries, ambiguous/invalid rejection), `check_inspection_mask`/`check_inspection_landmarks` frame-quality gates, real measurement math through `LiveDetector` with a stubbed agent, and the full `phone_server` `/measure` API (auto-underwear mode, legacy mode, busy/429, failure/500 + lock release, static asset serving). |
 | [`test/test_runtime.py`](../test/test_runtime.py) | `python -m unittest` | `select_device` CPU/auto/explicit-CUDA behavior, `InferenceRuntime` low-VRAM offloading and OOM-retry-then-stay-on-CPU behavior, checkpoint-prefix stripping, classification following the model's own device, segmentation mask resize-back to original resolution. |
-| [`test/test_inspection.mjs`](../test/test_inspection.mjs) | `node --test` | `InspectionGate` state transitions: empty never triggers, a paused item triggers exactly once and its token is accepted, movement invalidates a pending/displayed result, the empty-gap rearm timing, a brief empty flash not being enough to rearm, manual retry, cumulative-drift detection, small-noise tolerance. |
+| [`test/test_inspection.mjs`](../test/test_inspection.mjs) | `node --test` | `SettleGate` state transitions: a still item becomes ready after ~1.25s, a moving item never becomes ready, movement resets the stability timer, cumulative-drift detection, small-noise tolerance. |
 | [`test/test_live_page.mjs`](../test/test_live_page.mjs) | `node --test` | Page-level behavior with simulated camera/DOM adapters (not covered in this guide — read it directly alongside `app.js` if you're changing frontend control flow). |
 | `test/*.ipynb` | Jupyter / Colab | Upstream GarmentIQ usage examples (classification, segmentation, landmark detection/refinement/derivation, tailor pipeline, custom instructions, training/fine-tuning) — reference material for the library API, not this fork's app layer. |
 
@@ -1193,21 +1237,29 @@ second style with its own reference table would need its own `REFERENCES`-like d
 the UI/API to select between them (currently `mode=underwear` always implies `class_name="shorts"`
 and the single `REFERENCES` table).
 
-### Adjust automatic-inspection timing/sensitivity
+### Adjust the settle-before-capture timing/sensitivity
 
-All tunables are constructor defaults on `InspectionGate` in
+The tunable is a constructor default on `SettleGate` in
 [`phone_web/inspection.mjs`](../phone_web/inspection.mjs):
 
 ```javascript
-constructor({settleMs = 1250, emptyMs = 750} = {}) { ... }
+constructor({settleMs = 1250} = {}) { ... }
 ```
 
-plus the hardcoded thresholds inside `update()` (`foreground < .05`, `motion > .015`) and
-`changedFraction`'s `threshold = 22` (per-channel RGB difference). `app.js` constructs the gate
-with no options (`gate = new InspectionGate();`), so change the defaults here, or pass an options
-object at that call site for a one-off tweak. After any change, re-run
-`node --test test/test_inspection.mjs` — several tests assert on exact timing boundaries and will
-tell you immediately if a change altered behavior you didn't intend.
+plus the hardcoded motion threshold inside `update()` (`motion > .015`) and `changedFraction`'s
+`threshold = 22` (per-channel RGB difference). `app.js`'s `startInspection()` constructs the gate
+with no options (`new SettleGate()`), so change the defaults here, or pass an options object at
+that call site for a one-off tweak. After any change, re-run `node --test test/test_inspection.mjs`
+— several tests assert on exact timing boundaries and will tell you immediately if a change
+altered behavior you didn't intend.
+
+### Change how long a result stays on screen
+
+It already stays on screen indefinitely — nothing auto-clears it (Section 8). The only things that
+replace it are: the next "Start inspection" press reaching a real capture (`captureAndMeasure()`
+calls `clearResult('Inspecting')` unconditionally at the start of every request), or an explicit
+setup change while a cycle is in progress (`abortInspection()`, e.g. camera disconnect or
+recalibration). There is no timer to tune here anymore.
 
 ### Change or add a frame-quality/geometry rejection rule
 
@@ -1251,6 +1303,17 @@ release it in a `finally`. Add a corresponding `ApiTests`-style test in `test/te
 (it already shows the `app.test_client()` + `unittest.mock.patch.object(..., "agent", fake_agent())`
 pattern for testing without loading real models).
 
+### Change what's saved to disk per inspection, or where
+
+Edit `save_inspection_snapshot()` / `render_dimensions_table()` in
+[`phone_server.py`](../phone_server.py) — Section 6.5 has the full walkthrough. To change the
+default save folder, edit `prompt_snapshot_dir()`'s `default_dir`; to save unconditionally without
+the startup prompt (e.g. for a non-interactive/service deployment), set `snapshot_dir` directly
+instead of calling `prompt_snapshot_dir()` in `main()`. To also save snapshots for plain
+"measure one frame" requests, drop the `underwear and` part of the `if underwear and measurements
+and snapshot_dir:` guard — note `decision` is `None` outside underwear mode, so
+`render_dimensions_table()`'s reference/delta columns would need a `None`-decision fallback first.
+
 ### Modify the calibration/inspection UI
 
 Frontend logic lives entirely in `phone_web/app.js` (UI state, DOM, camera, HTTP) and
@@ -1281,9 +1344,11 @@ already called out in the companion guides, condensed here for a full-codebase v
 - **Calibration is a single 1-D pixel/inch scale**, not a real camera calibration — it assumes a
   flat scene, negligible perspective/lens distortion, and a camera that never moves after
   calibration.
-- **The browser's presence/motion detection is a cheap RGB-difference heuristic**, not a trained
-  object tracker — patterned/moving belts, shadows, and lighting flicker can confuse it, and a
-  near-identical item swapped in without a visible empty gap can be missed.
+- **The browser's stillness check is a cheap RGB-difference heuristic**, not a trained object
+  tracker, and it deliberately has no presence detection at all — it only tells whether the frame
+  has stopped changing, not whether an item is actually in view. That responsibility now sits with
+  the operator (only press "Start inspection" when something is present) and with the server's
+  mask/landmark checks below.
 - **The mask/landmark rejection checks are heuristics**, not proof that the frame contains a
   correctly laid-out underwear item — they cannot reliably catch folds, overlapping garments, blur,
   hands, or a convincing false segmentation.
@@ -1344,15 +1409,18 @@ already called out in the companion guides, condensed here for a full-codebase v
         {"size": "L", "rmse_in": 0.12, "within_tolerance": True, "deltas_in": {...}},
         ...  # all four sizes, sorted by rmse_in ascending
     ],
-    "reference": {"front rise": 11.14, "full length": 12.65, "hips": 16.72, "waist": 14.62} | None
+    "reference": {"front rise": 11.14, "full length": 12.65, "hips": 16.72, "waist": 14.62} | None,
+    # Always populated (Section 8.5), even when "reference" above is None:
+    "closest_size": "L", "closest_reference": {...}, "closest_deltas_in": {...}, "closest_rmse_in": 0.12
 }
 ```
 
-### `InspectionGate.update()` return value
+### `SettleGate.update()` return value
 
 ```javascript
-{state: "empty"|"moving"|"settling"|"capture"|"holding"|"clear", foreground: 0..1, motion: 0..1, token?: number}
+{state: "moving"|"settling"|"ready", motion: 0..1}
 ```
 
-`token` is present only on `"capture"`; pass it to `gate.accepts(token)` to check whether a result
-is still valid for whatever's currently in the inspection area.
+No token/validity bookkeeping here (Section 8.2) — a fresh gate is created per button press and
+used for exactly one settle-then-capture cycle, so `app.js`'s `epoch` alone is enough to guard
+against a stale result from a cycle that setup changes invalidated mid-flight.

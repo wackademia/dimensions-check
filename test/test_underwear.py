@@ -54,6 +54,22 @@ class SizeTests(unittest.TestCase):
         sample = {key: {"distance": (REFERENCES["L"][key] + REFERENCES["XL"][key]) / 2, "unit": "in"} for key in REFERENCES["L"]}
         self.assertEqual(estimate_size(sample, .7)["status"], "uncertain")
 
+    def test_uncertain_result_still_reports_the_closest_size(self):
+        sample = measurements("XL")
+        sample["full length"]["distance"] = 25
+        result = estimate_size(sample)
+        self.assertEqual(result["status"], "uncertain")
+        self.assertIsNone(result["reference"])
+        self.assertEqual(result["closest_size"], result["candidates"][0]["size"])
+        self.assertEqual(result["closest_reference"], REFERENCES[result["closest_size"]])
+        self.assertEqual(result["closest_deltas_in"], result["candidates"][0]["deltas_in"])
+        self.assertEqual(result["closest_rmse_in"], result["candidates"][0]["rmse_in"])
+
+    def test_matched_result_closest_fields_agree_with_the_match(self):
+        result = estimate_size(measurements("M"))
+        self.assertEqual(result["closest_size"], "M")
+        self.assertEqual(result["closest_reference"], result["reference"])
+
     def test_invalid_or_missing_measurements(self):
         for value in (float("nan"), float("inf"), 0, -1, "14", True, None):
             sample = measurements("M")

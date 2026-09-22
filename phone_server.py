@@ -6,10 +6,13 @@ import math
 import mimetypes
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
+from PIL import Image, ImageDraw, ImageFont
 
 import run_live
 from garmentiq import LiveDetector
@@ -26,6 +29,100 @@ app = Flask(__name__, static_folder="phone_web")
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 inference_lock = threading.Lock()
 agent = None
+snapshot_dir = None
+
+
+def prompt_snapshot_dir():
+    """Ask where to save inspection snapshots. Run interactively at startup since the
+    server is typically launched fresh on each machine it runs on."""
+    default_dir = Path("snapshots")
+    answer = input(f"Where should inspection snapshots be saved? [{default_dir}]: ").strip()
+    directory = Path(answer) if answer else default_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    print(f"Saving inspection snapshots to: {directory.resolve()}")
+    return directory
+
+
+def _table_fonts():
+    try:
+        return ImageFont.truetype("arial.ttf", 20), ImageFont.truetype("arialbd.ttf", 20)
+    except OSError:
+        font = ImageFont.load_default(size=20)
+        return font, font
+
+
+def render_dimensions_table(measurements, decision, garment_class):
+    font, header_font = _table_fonts()
+    decision = decision or {}
+    matched_reference = decision.get("reference")
+    # Uncertain results still get a comparison column (the closest size, even though it
+    # didn't match on every dimension) instead of a blank "—" with no data to review.
+    reference = matched_reference or decision.get("closest_reference") or {}
+    if matched_reference:
+        reference_column = "Reference"
+    elif decision.get("closest_size"):
+        reference_column = f'Closest: {decision["closest_size"]} (unmatched)'
+    else:
+        reference_column = "Reference"
+    columns = ["Measurement", "Measured", reference_column, "Delta"]
+    rows = []
+    for name in sorted(measurements):
+        value = measurements[name]
+        ref = reference.get(name)
+        rows.append([
+            name,
+            f'{value["distance"]:.2f} {value["unit"]}',
+            f"{ref:.2f} in" if ref is not None else "—",
+            f'{value["distance"] - ref:+.2f} in' if ref is not None else "—",
+        ])
+    size_text = decision.get("size") if decision else None
+    header_line = f'{garment_class} · Size: {size_text or "uncertain"}'
+    reason_line = decision.get("reason", "") if decision else ""
+
+    scratch_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    padding = 12
+    col_widths = [
+        max(scratch_draw.textlength(str(line[i]), font=header_font if line is columns else font)
+            for line in [columns] + rows) + padding * 2
+        for i in range(len(columns))
+    ]
+    row_height = 30
+    table_width = int(sum(col_widths))
+    header_height = 66
+    table_height = header_height + row_height * (len(rows) + 1)
+
+    table = Image.new("RGB", (table_width, table_height), "white")
+    draw = ImageDraw.Draw(table)
+    draw.text((padding, 8), header_line, font=header_font, fill="black")
+    draw.text((padding, 34), reason_line, font=font, fill=(80, 80, 80))
+    x = 0
+    for i, column in enumerate(columns):
+        draw.text((x + padding, header_height + 6), column, font=header_font, fill="black")
+        x += col_widths[i]
+    draw.line((0, header_height + row_height, table_width, header_height + row_height), fill="black", width=2)
+    for r, row in enumerate(rows):
+        y = header_height + row_height * (r + 1)
+        x = 0
+        for i, cell in enumerate(row):
+            draw.text((x + padding, y + 6), str(cell), font=font, fill="black")
+            x += col_widths[i]
+        draw.line((0, y + row_height, table_width, y + row_height), fill=(220, 220, 220), width=1)
+    return table
+
+
+def save_inspection_snapshot(annotated_bgr, measurements, decision, garment_class):
+    """Compose the annotated photo with a dimensions table below it and save to disk."""
+    photo = Image.fromarray(cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB))
+    table = render_dimensions_table(measurements, decision, garment_class)
+    width = max(photo.width, table.width)
+    canvas = Image.new("RGB", (width, photo.height + table.height), "white")
+    canvas.paste(photo, ((width - photo.width) // 2, 0))
+    canvas.paste(table, ((width - table.width) // 2, photo.height))
+    size_label = (decision.get("size") if decision else None) or "uncertain"
+    filename = f"{datetime.now():%Y%m%d_%H%M%S}_{garment_class}_{size_label}.jpg"
+    path = snapshot_dir / filename
+    canvas.save(path, quality=92)
+    return path
 
 
 @app.get("/")
@@ -95,6 +192,12 @@ def measure():
         return jsonify(error="Inference failed. Check the server log and inspect the item again."), 500
     finally:
         inference_lock.release()
+    if underwear and measurements and snapshot_dir:
+        try:
+            saved_path = save_inspection_snapshot(annotated, measurements, decision, label)
+            app.logger.info("Saved inspection snapshot to %s", saved_path)
+        except Exception:
+            app.logger.exception("Failed to save inspection snapshot")
     ok, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])
     if not ok:
         return jsonify(error="Could not encode result"), 500
@@ -108,7 +211,7 @@ def measure():
 
 
 def main():
-    global agent
+    global agent, snapshot_dir
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8443)
@@ -119,6 +222,7 @@ def main():
         help="Serve plain HTTP (safe for camera access on localhost only)",
     )
     args = parser.parse_args()
+    snapshot_dir = prompt_snapshot_dir()
     print("Loading GarmentIQ models. This can take about a minute on CPU...")
     agent = run_live.build_agent(args.device, args.low_vram, args.segmentation_size)
     scheme = "HTTP" if args.http else "HTTPS"

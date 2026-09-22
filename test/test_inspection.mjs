@@ -1,60 +1,52 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {InspectionGate, changedFraction} from '../phone_web/inspection.mjs';
+import {SettleGate, changedFraction} from '../phone_web/inspection.mjs';
 
 const frame = value => new Uint8ClampedArray(400).fill(value);
-const background = frame(0), item = frame(120), different = frame(220);
-function capture(gate, from = 0, sample = item) {
-  gate.update(sample, background, from);
-  gate.update(sample, background, from + 250);
-  return gate.update(sample, background, from + 1500);
+const item = frame(120), different = frame(220);
+
+function settle(gate, from = 0, sample = item) {
+  gate.update(sample, from);
+  gate.update(sample, from + 250);
+  return gate.update(sample, from + 1500);
 }
-test('empty belt never triggers', () => {
-  const gate = new InspectionGate();
-  for (let time = 0; time < 5000; time += 250) assert.equal(gate.update(background, background, time).state, 'empty');
+
+test('a still item becomes ready after ~1.25s of stillness', () => {
+  const gate = new SettleGate();
+  assert.equal(settle(gate).state, 'ready');
 });
-test('paused item triggers once and accepts its result', () => {
-  const gate = new InspectionGate();
-  const result = capture(gate);
-  assert.equal(result.state, 'capture'); assert.ok(gate.accepts(result.token));
-  assert.equal(gate.update(item, background, 5000).state, 'holding');
+test('moving item never becomes ready', () => {
+  const gate = new SettleGate();
+  for (let t = 0; t < 5000; t += 250) assert.equal(gate.update(t % 500 ? item : different, t).state, 'moving');
 });
-test('moving item never triggers', () => {
-  const gate = new InspectionGate();
-  for (let t = 0; t < 5000; t += 250) assert.equal(gate.update(t % 500 ? item : different, background, t).state, 'moving');
+test('settling reports before settleMs of stillness has passed', () => {
+  const gate = new SettleGate();
+  gate.update(item, 0);
+  assert.equal(gate.update(item, 250).state, 'settling');
 });
-test('movement invalidates a pending or displayed result', () => {
-  const gate = new InspectionGate(), result = capture(gate);
-  assert.equal(gate.update(different, background, 2000).state, 'clear');
-  assert.ok(!gate.accepts(result.token));
-  assert.equal(gate.update(different, background, 6000).state, 'clear');
-});
-test('empty gap rearms and rejects the old result for the next item', () => {
-  const gate = new InspectionGate(), first = capture(gate);
-  gate.update(background, background, 2000); gate.update(background, background, 2750);
-  const second = capture(gate, 3000, different);
-  assert.equal(second.state, 'capture'); assert.ok(gate.accepts(second.token));
-  assert.ok(!gate.accepts(first.token));
-});
-test('brief empty flash is not enough to rearm', () => {
-  const gate = new InspectionGate(); capture(gate);
-  gate.update(background, background, 2000); gate.update(item, background, 2250);
-  assert.equal(gate.update(item, background, 5000).state, 'clear');
-});
-test('manual reinspection invalidates the first result and waits for stability', () => {
-  const gate = new InspectionGate(), first = capture(gate);
-  gate.retry(); assert.ok(!gate.accepts(first.token));
-  assert.equal(capture(gate, 2000).state, 'capture');
+test('movement resets the stability timer', () => {
+  const gate = new SettleGate();
+  gate.update(item, 0); gate.update(item, 250);
+  assert.equal(gate.update(different, 500).state, 'moving');
+  assert.equal(gate.update(item, 750).state, 'moving', 'still transitioning away from `different`');
+  assert.equal(gate.update(item, 1000).state, 'settling', 'now stable again');
+  assert.equal(gate.update(item, 2500).state, 'ready');
 });
 test('cumulative drift cannot pass the stability test', () => {
-  const gate = new InspectionGate();
-  gate.update(item, background, 0); gate.update(item, background, 250);
+  const gate = new SettleGate();
+  gate.update(item, 0); gate.update(item, 250);
   for (let i = 1; i <= 6; i++) {
     const drifting = item.slice(); drifting.fill(240, 0, i * 4);
-    assert.notEqual(gate.update(drifting, background, 250 + i * 250).state, 'capture');
+    assert.notEqual(gate.update(drifting, 250 + i * 250).state, 'ready');
   }
+});
+test('a fresh gate has no presence/empty concept: a still empty scene also becomes ready', () => {
+  // Unlike the old InspectionGate, SettleGate only waits for stillness; whether an item
+  // is actually present is left to the server's own frame-quality checks after capture.
+  const gate = new SettleGate();
+  assert.equal(settle(gate, 0, frame(0)).state, 'ready');
 });
 test('small pixel noise does not count as motion', () => {
   assert.equal(changedFraction(item, frame(125)), 0);
-  assert.equal(changedFraction(item, background), 1);
+  assert.equal(changedFraction(item, frame(0)), 1);
 });

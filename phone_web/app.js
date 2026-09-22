@@ -1,17 +1,13 @@
-import {InspectionGate} from './inspection.mjs';
+import {SettleGate} from './inspection.mjs';
 
 const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('overlay'), context = overlay.getContext('2d');
 const probe = document.createElement('canvas');
 probe.width = 96; probe.height = 72;
 const probeContext = probe.getContext('2d', {willReadFrequently: true});
-let stream, roi, background, gate, timer, frozen;
-let scale = 0, selection = null, points = [], running = false, busy = false, epoch = 0;
-let cameraReady = false, lastState = '', lastVideoTime = -1, lastVideoAdvance = 0;
-// Keep a completed item's measurements on screen for a minimum stretch even if it
-// wobbles afterward; only an actual new inspection (see inspect()) overrides this early.
-const RESULT_HOLD_MS = 20000;
-let resultShownAt = 0;
+let stream, roi, settleTimer, frozen;
+let scale = 0, selection = null, points = [], busy = false, epoch = 0;
+let cameraReady = false, lastVideoTime = -1, lastVideoAdvance = 0;
 const isUnderwear = () => $('mode').value === 'underwear';
 const say = text => { $('status').textContent = text; };
 
@@ -23,18 +19,14 @@ function clearResult(title = 'Waiting') {
   $('measurements').replaceChildren();
 }
 function controls() {
-  for (const id of ['camera', 'mode', 'className', 'calibrate', 'area', 'background']) {
-    $(id).disabled = busy || running || !!selection || !cameraReady;
+  for (const id of ['camera', 'mode', 'className', 'calibrate', 'area']) {
+    $(id).disabled = busy || !!selection || !cameraReady;
   }
-  $('background').disabled ||= !scale;
-  $('start').disabled = !cameraReady || !scale || !background || busy || running || !!selection;
-  $('stop').disabled = !running;
-  $('retry').disabled = !running || busy;
+  $('start').disabled = !cameraReady || !scale || busy || !!selection;
   $('measure').disabled = !cameraReady || !scale || busy || !!selection;
   $('measure').hidden = isUnderwear();
   $('classControl').hidden = isUnderwear();
-  $('start').hidden = $('stop').hidden = $('retry').hidden = !isUnderwear();
-  $('background').hidden = !isUnderwear();
+  $('start').hidden = !isUnderwear();
   $('cancel').hidden = !selection;
 }
 function drawArea() {
@@ -43,12 +35,20 @@ function drawArea() {
   context.strokeStyle = '#81e6b5'; context.lineWidth = 3;
   context.strokeRect(roi.x + 1, roi.y + 1, roi.w - 2, roi.h - 2);
 }
-function stop(message = 'Inspection stopped. No new frames will be submitted.') {
-  running = false; epoch++; clearInterval(timer); timer = null; lastState = '';
-  clearResult('Stopped'); say(message); controls();
+// Bumps epoch (so any in-flight capture/settle cycle discards its result rather than
+// showing something stale) and, if we're still in the pre-capture settle wait (nothing
+// sent to the server yet), frees the Start button immediately. A request already sent to
+// the server keeps `busy` set until its own response/failure resolves — this does not
+// cancel inference already running on the PC, only what happens with its result.
+function abortInspection(message) {
+  epoch++;
+  if (settleTimer) { clearInterval(settleTimer); settleTimer = null; busy = false; }
+  clearResult('Stopped');
+  if (message) say(message);
+  controls();
 }
 function resetSetup(message) {
-  stop(message); scale = 0; background = null; selection = null;
+  abortInspection(message); scale = 0; selection = null;
   $('setup').textContent = message;
   roi = {x: 0, y: 0, w: video.videoWidth, h: video.videoHeight};
   overlay.width = video.videoWidth; overlay.height = video.videoHeight;
@@ -56,7 +56,7 @@ function resetSetup(message) {
 }
 async function startCamera(deviceId = '') {
   cameraReady = false;
-  stop('Connecting to camera...');
+  abortInspection('Connecting to camera...');
   stream?.getTracks().forEach(track => track.stop());
   try {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Use localhost on the PC or HTTPS on a phone.');
@@ -76,13 +76,13 @@ async function startCamera(deviceId = '') {
       cameraReady = false; resetSetup('Camera disconnected. Reload this page to reconnect and recalibrate.');
     };
   } catch (error) {
-    cameraReady = false; scale = 0; background = null;
+    cameraReady = false; scale = 0;
     say(`Camera error: ${error.message}`); $('cameraStatus').textContent = 'No camera available. Check its connection and browser permission.';
     controls(); $('camera').disabled = false;
   }
 }
 function freezeFor(kind) {
-  epoch++; background = null; selection = kind; points = []; clearResult('Setup');
+  epoch++; selection = kind; points = []; clearResult('Setup');
   if (kind === 'ruler') scale = 0;
   frozen = document.createElement('canvas'); frozen.width = video.videoWidth; frozen.height = video.videoHeight;
   frozen.getContext('2d').drawImage(video, 0, 0);
@@ -117,8 +117,8 @@ overlay.addEventListener('pointerdown', event => {
     roi = {x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w, h};
   }
   selection = null; frozen = null; drawArea(); controls();
-  $('setup').textContent = scale ? `Calibrated: ${scale.toFixed(2)} pixels/inch. Area: ${roi.w} × ${roi.h} pixels. Empty-area reference needs capture.` : 'Calibrate the ruler before continuing.';
-  say('Remove the ruler and any garment, then capture the empty inspection area. Do not move the camera.');
+  $('setup').textContent = scale ? `Calibrated: ${scale.toFixed(2)} pixels/inch. Area: ${roi.w} × ${roi.h} pixels.` : 'Calibrate the ruler before continuing.';
+  say('Remove the ruler, then present an item and press Start inspection.');
 });
 
 function renderResult(data, capturedAt, elapsed) {
@@ -128,21 +128,27 @@ function renderResult(data, capturedAt, elapsed) {
   say(decision ? decision.reason : 'Measurement complete. Values below are in inches.');
   $('timing').textContent = `Inspected snapshot: ${capturedAt.toLocaleTimeString()} · model ${data.inference_seconds}s · round trip ${elapsed.toFixed(1)}s. This is not the current video frame.`;
   $('result').src = data.image; $('resultPanel').hidden = false;
-  resultShownAt = performance.now();
+  // A confirmed match shows its reference; an uncertain result still shows the closest
+  // size's reference and how far off each measurement was, instead of a blank column.
+  const matched = decision?.reference;
+  const closest = decision?.closest_reference;
+  $('referenceHeader').textContent = matched ? 'Reference'
+    : closest ? `Closest: ${decision.closest_size} (unmatched)` : 'Reference';
   $('measurements').replaceChildren(...Object.entries(data.measurements).map(([name, value]) => {
     const row = document.createElement('tr');
-    const reference = decision?.reference?.[name];
-    for (const text of [name, `${value.distance.toFixed(2)} in`, reference == null ? '—' : `${reference.toFixed(2)} in`]) {
+    const reference = matched?.[name] ?? closest?.[name];
+    const referenceText = reference == null ? '—'
+      : `${reference.toFixed(2)} in (Δ${(value.distance - reference >= 0 ? '+' : '')}${(value.distance - reference).toFixed(2)})`;
+    for (const text of [name, `${value.distance.toFixed(2)} in`, referenceText]) {
       const cell = document.createElement('td'); cell.textContent = text; row.append(cell);
     }
     return row;
   }));
 }
-async function inspect(token = null) {
-  if (busy) return;
-  const requestEpoch = epoch, requestGate = gate, automatic = token !== null;
-  const current = () => requestEpoch === epoch && (!automatic || (running && requestGate === gate && gate.accepts(token)));
-  busy = true; controls(); clearResult('Inspecting'); say('Hold the item still until its result appears.');
+async function captureAndMeasure() {
+  const requestEpoch = epoch;
+  const current = () => requestEpoch === epoch;
+  clearResult('Inspecting'); say('Measuring the current frame...');
   const capturedAt = new Date(), started = performance.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 300000);
@@ -162,60 +168,63 @@ async function inspect(token = null) {
   } catch (error) {
     if (current()) {
       clearResult('Inspection failed');
-      say(`${error.name === 'AbortError' ? 'Request timed out; the server may still be processing.' : error.message} Use Reinspect item to retry, or clear the area.`);
+      say(`${error.name === 'AbortError' ? 'Request timed out; the server may still be processing.' : error.message} Press Start inspection to retry.`);
     }
   } finally {
     clearTimeout(timeout);
-    busy = false; controls();
   }
 }
-function tick() {
-  if (!running) return;
-  if (!cameraReady || video.readyState < 2 || video.videoWidth !== overlay.width || video.videoHeight !== overlay.height) {
-    resetSetup('Video changed or became unavailable. Recalibrate and capture the empty area again.'); return;
-  }
-  const now = performance.now();
-  if (video.currentTime !== lastVideoTime) { lastVideoTime = video.currentTime; lastVideoAdvance = now; }
-  else if (now - lastVideoAdvance > 2000) { resetSetup('Camera feed froze. Check the camera, then repeat setup.'); return; }
-  const state = gate.update(sample(), background, now);
-  $('activity').textContent = `Area change ${(state.foreground * 100).toFixed(0)}% · motion ${(state.motion * 100).toFixed(1)}%${busy ? ' · model busy' : ''}`;
-  if (state.state !== lastState) {
-    const messages = {empty: 'Waiting for one item. Keep the inspection area empty between garments.',
-      moving: 'Item is moving. Waiting for it to pause.', settling: 'Item detected. Waiting for a stable view.',
-      clear: 'Item moved after inspection. Clear the area before the next item, or use Reinspect item.'};
-    const holdingResult = now - resultShownAt < RESULT_HOLD_MS;
-    if (messages[state.state]) {
-      if (!holdingResult) clearResult(state.state === 'clear' ? 'Clear area' : 'Waiting');
-      say(messages[state.state]);
+// One press = one item: wait briefly for it to stop moving (so the captured frame isn't
+// blurry), then measure it once. The result stays on screen — nothing here clears it —
+// until the next press overwrites it with a new one.
+function startInspection() {
+  if (busy || selection) return;
+  busy = true; controls();
+  const requestEpoch = epoch;
+  const gate = new SettleGate();
+  let lastState = '';
+  lastVideoTime = -1; lastVideoAdvance = performance.now();
+  say('Hold the item still...');
+  settleTimer = setInterval(() => {
+    if (requestEpoch !== epoch) return; // aborted elsewhere; that already cleared this timer
+    if (!cameraReady || video.readyState < 2 || video.videoWidth !== overlay.width || video.videoHeight !== overlay.height) {
+      resetSetup('Video changed or became unavailable. Recalibrate and try again.'); return;
     }
-    lastState = state.state;
-  }
-  if (state.state === 'capture') {
-    if (busy) { gate.retry(); clearResult('Model busy'); say('Previous frame is still processing. Keep this item still.'); }
-    else void inspect(state.token);
-  }
+    const now = performance.now();
+    if (video.currentTime !== lastVideoTime) { lastVideoTime = video.currentTime; lastVideoAdvance = now; }
+    else if (now - lastVideoAdvance > 2000) { resetSetup('Camera feed froze. Check the camera, then try again.'); return; }
+    const state = gate.update(sample(), now);
+    $('activity').textContent = `motion ${(state.motion * 100).toFixed(1)}%`;
+    if (state.state !== lastState) {
+      const messages = {moving: 'Item is moving. Waiting for it to settle.', settling: 'Waiting for a stable view.'};
+      if (messages[state.state]) say(messages[state.state]);
+      lastState = state.state;
+    }
+    if (state.state === 'ready') {
+      clearInterval(settleTimer); settleTimer = null;
+      captureAndMeasure().finally(() => { busy = false; controls(); });
+    }
+  }, 250);
 }
 $('camera').onchange = () => void startCamera($('camera').value);
 $('calibrate').onclick = () => freezeFor('ruler');
 $('area').onclick = () => freezeFor('area');
-$('cancel').onclick = () => { selection = null; frozen = null; drawArea(); controls(); say('Selection cancelled. Capture the empty area again before starting.'); };
-$('background').onclick = () => {
-  background = sample(); epoch++; clearResult('Ready');
-  $('setup').textContent = `${scale.toFixed(2)} pixels/inch · inspection area ${roi.w} × ${roi.h} · empty reference captured.`;
-  say('Ready. Start inspection, then place one item flat with the waistband at the top.'); controls();
+$('cancel').onclick = () => { selection = null; frozen = null; drawArea(); controls(); say('Selection cancelled.'); };
+$('mode').onchange = () => {
+  abortInspection(); clearResult('Ready');
+  say(isUnderwear() ? 'Present an item, then press Start inspection.' : 'Select a garment type and measure a single frame.');
+  controls();
 };
-$('mode').onchange = () => { stop(); clearResult('Ready'); say(isUnderwear() ? 'Capture an empty area, then start automatic inspection.' : 'Select a garment type and measure a single frame.'); controls(); };
-$('start').onclick = () => {
-  running = true; epoch++; gate = new InspectionGate(); lastState = ''; lastVideoTime = -1; lastVideoAdvance = performance.now();
-  clearResult(); controls(); timer = setInterval(tick, 250); tick();
+$('start').onclick = startInspection;
+$('measure').onclick = () => {
+  if (busy) return;
+  busy = true; controls();
+  captureAndMeasure().finally(() => { busy = false; controls(); });
 };
-$('stop').onclick = () => stop();
-$('retry').onclick = () => { gate.retry(); lastState = ''; clearResult(); say('Waiting for this item to be still before another inspection.'); };
-$('measure').onclick = () => void inspect();
-document.addEventListener('visibilitychange', () => { if (document.hidden && (running || busy)) stop('Inspection paused because the page is hidden. Return here and press Start inspection.'); });
-window.addEventListener('pagehide', () => { stop(); stream?.getTracks().forEach(track => track.stop()); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && busy) abortInspection('Inspection paused because the page is hidden. Press Start inspection again.'); });
+window.addEventListener('pagehide', () => { abortInspection(); stream?.getTracks().forEach(track => track.stop()); });
 video.addEventListener('resize', () => {
-  if (cameraReady && (video.videoWidth !== overlay.width || video.videoHeight !== overlay.height)) resetSetup('Camera resolution changed. Recalibrate and capture the empty area again.');
+  if (cameraReady && (video.videoWidth !== overlay.width || video.videoHeight !== overlay.height)) resetSetup('Camera resolution changed. Recalibrate before continuing.');
 });
 async function loadReferences() {
   try {

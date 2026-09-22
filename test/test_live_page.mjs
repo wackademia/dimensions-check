@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
-import {InspectionGate} from '../phone_web/inspection.mjs';
+import {SettleGate} from '../phone_web/inspection.mjs';
 
 const html = fs.readFileSync(new URL('../phone_web/index.html', import.meta.url), 'utf8');
 const code = fs.readFileSync(new URL('../phone_web/app.js', import.meta.url), 'utf8')
-  .replace("import {InspectionGate} from './inspection.mjs';", '');
+  .replace("import {SettleGate} from './inspection.mjs';", '');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 async function page() {
@@ -39,7 +39,7 @@ async function page() {
   };
   class Form { constructor() { this.fields = new Map(); } append(...args) { this.fields.set(args[0], args[1]); } }
   vm.runInNewContext(code, {
-    InspectionGate, document, window: {addEventListener() {}},
+    SettleGate, document, window: {addEventListener() {}},
     navigator: {mediaDevices: {getUserMedia: async () => ({getTracks: () => [track], getVideoTracks: () => [track]}),
       enumerateDevices: async () => [{kind: 'videoinput', deviceId: 'test-camera', label: 'Overhead test camera'}]}},
     Option: function (label, value) { return {label, value}; },
@@ -60,7 +60,6 @@ async function page() {
       elements.calibrate.onclick();
       elements.overlay.events.pointerdown({clientX: 100, clientY: 100});
       elements.overlay.events.pointerdown({clientX: 700, clientY: 100});
-      elements.background.onclick();
       await flush();
     },
     async reply(ok = true) {
@@ -76,7 +75,7 @@ async function page() {
   return api;
 }
 
-test('page requires calibration and empty reference; frozen selection works', async () => {
+test('page requires calibration; frozen selection works', async () => {
   const p = await page();
   assert.ok(p.elements.start.disabled);
   assert.equal(p.elements.tolerance.textContent, '0.50');
@@ -87,12 +86,12 @@ test('page requires calibration and empty reference; frozen selection works', as
   p.elements.area.onclick();
   p.elements.overlay.events.pointerdown({clientX: 10, clientY: 10});
   p.elements.overlay.events.pointerdown({clientX: 1200, clientY: 900});
-  assert.ok(p.elements.start.disabled, 'new crop invalidates empty reference');
-  p.elements.background.onclick();
   assert.match(p.elements.setup.textContent, /50.00 pixels\/inch/, 'crop preserves pixel scale');
+  assert.ok(!p.elements.start.disabled, 'no empty-area capture step is required anymore');
 });
-test('stable item is sized once; video is not hidden', async () => {
+test('one press: waits for stillness, measures once, then re-enables the button', async () => {
   const p = await page(); await p.setup(); p.elements.start.onclick();
+  assert.ok(p.elements.start.disabled, 'disabled while waiting/measuring');
   await p.tick(120, 8);
   assert.equal(p.requests.length, 1);
   assert.equal(p.requests[0].body.fields.get('mode'), 'underwear');
@@ -100,36 +99,40 @@ test('stable item is sized once; video is not hidden', async () => {
   await p.reply();
   assert.equal(p.elements.size.textContent, 'Estimated L');
   assert.equal(p.elements.resultPanel.hidden, false);
-  assert.equal(p.elements.video.hidden, false);
-  await p.tick(120, 10); assert.equal(p.requests.length, 1);
+  assert.ok(!p.elements.start.disabled, 'reengageable once the result is shown');
 });
-test('late result is discarded when an item leaves; next item can be inspected', async () => {
+test('the result stays on screen until the next inspection, regardless of motion', async () => {
   const p = await page(); await p.setup(); p.elements.start.onclick();
-  await p.tick(120, 8); await p.tick(0, 5); await p.reply();
-  assert.notEqual(p.elements.size.textContent, 'Estimated L');
-  assert.ok(p.elements.resultPanel.hidden);
-  await p.tick(220, 8); assert.equal(p.requests.length, 2);
-  await p.reply(); assert.equal(p.elements.size.textContent, 'Estimated L');
+  await p.tick(120, 8); await p.reply();
+  assert.equal(p.elements.size.textContent, 'Estimated L');
+  await p.tick(220, 20); // item removed/replaced; nothing polls or clears automatically
+  assert.equal(p.elements.size.textContent, 'Estimated L');
+  assert.equal(p.elements.resultPanel.hidden, false);
 });
-test('one in-flight request; replacement waits instead of building a queue', async () => {
+test('a second press measures the next item and overwrites the previous result', async () => {
   const p = await page(); await p.setup(); p.elements.start.onclick();
-  await p.tick(120, 8); await p.tick(0, 5); await p.tick(220, 8);
-  assert.equal(p.requests.length, 1);
-  await p.reply(); assert.notEqual(p.elements.size.textContent, 'Estimated L');
-  await p.tick(220, 8); assert.equal(p.requests.length, 2);
+  await p.tick(120, 8); await p.reply();
+  p.elements.start.onclick();
+  assert.ok(p.elements.start.disabled, 'measuring the next item');
+  await p.tick(120, 8);
+  assert.equal(p.requests.length, 2);
+  await p.reply();
+  assert.equal(p.elements.size.textContent, 'Estimated L');
 });
-test('stop suppresses an in-flight result and allows restarting after completion', async () => {
+test('late result is discarded when setup is invalidated mid-wait', async () => {
   const p = await page(); await p.setup(); p.elements.start.onclick();
-  await p.tick(120, 8); p.elements.stop.onclick(); await p.reply();
-  assert.equal(p.elements.size.textContent, 'Stopped'); assert.ok(p.elements.resultPanel.hidden);
-  assert.ok(!p.elements.start.disabled);
+  await p.tick(120, 4);
+  p.elements.video.videoWidth = 640; p.elements.video.events.resize();
+  assert.ok(p.elements.start.disabled, 'recalibration required');
+  assert.match(p.elements.status.textContent, /resolution changed/);
 });
-test('server failures offer reinspection instead of auto retrying forever', async () => {
+test('server failures allow an immediate retry', async () => {
   const p = await page(); await p.setup(); p.elements.start.onclick();
   await p.tick(120, 8); await p.reply(false);
   assert.equal(p.elements.size.textContent, 'Inspection failed');
-  await p.tick(120, 8); assert.equal(p.requests.length, 1);
-  p.elements.retry.onclick(); await p.tick(120, 8); assert.equal(p.requests.length, 2);
+  assert.ok(!p.elements.start.disabled);
+  p.elements.start.onclick(); await p.tick(120, 8);
+  assert.equal(p.requests.length, 2);
 });
 test('camera resolution change invalidates calibration and pending results', async () => {
   const p = await page(); await p.setup(); p.elements.start.onclick(); await p.tick(120, 8);
@@ -137,8 +140,9 @@ test('camera resolution change invalidates calibration and pending results', asy
   assert.ok(p.elements.start.disabled); assert.ok(p.elements.resultPanel.hidden);
   assert.match(p.elements.status.textContent, /resolution changed/);
 });
-test('hidden tab stops inspections and ignores pending responses', async () => {
-  const p = await page(); await p.setup(); p.elements.start.onclick(); await p.tick(120, 8);
-  p.document.hidden = true; p.events.visibilitychange(); await p.reply();
-  assert.equal(p.elements.size.textContent, 'Stopped'); assert.ok(p.elements.resultPanel.hidden);
+test('hidden tab aborts the pending settle wait and ignores its late response', async () => {
+  const p = await page(); await p.setup(); p.elements.start.onclick(); await p.tick(120, 2);
+  p.document.hidden = true; p.events.visibilitychange();
+  assert.equal(p.elements.size.textContent, 'Stopped');
+  assert.ok(!p.elements.start.disabled, 'nothing was sent to the server yet, so it re-enables immediately');
 });

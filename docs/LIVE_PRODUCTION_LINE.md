@@ -1,10 +1,11 @@
-# Top-down underwear inspection (items pause)
+# Top-down underwear inspection (present, then press Start)
 
 This mode estimates **M, L, XL or 2XL** from a fixed overhead camera using your
-four underwear reference screenshots. Each item pauses, the page waits for a
-stable view, and the server measures a single snapshot. There is no size selector:
-the measured dimensions determine the estimate. No additional dependencies or
-model downloads are needed if the existing app already runs.
+four underwear reference screenshots. The operator places one item, presses
+**Start inspection**, the page waits briefly for a stable view, and the server
+measures a single snapshot. There is no size selector: the measured dimensions
+determine the estimate. No additional dependencies or model downloads are
+needed if the existing app already runs.
 
 This is an inspection prototype, not a validated production sorter. It does not
 control the conveyor, trigger a PLC, count items reliably, or train a new neural
@@ -36,6 +37,16 @@ inspection mode does not change those GPU settings. To require CUDA:
 For a phone camera, use the HTTPS LAN launcher and instructions in that guide.
 A phone must be fixed overhead too; handheld movement invalidates calibration.
 
+On startup the server prompts in the terminal for a folder to save inspection
+snapshots to (press Enter to accept the default `snapshots` folder next to the
+server). Every underwear inspection that produces measurements and a size
+decision saves one JPEG there: the annotated photo followed by a table of each
+measurement's value against a reference and its delta. When a size matches,
+that's the matched reference; when the result is **Uncertain**, the table still
+shows the *closest* size and how far off each dimension was, labelled
+"unmatched", instead of leaving the comparison blank. This runs regardless of
+the `--device`/GPU flags above.
+
 ## Set up the station
 
 1. Fix the camera directly above the inspection surface, parallel to it. Use
@@ -49,33 +60,38 @@ A phone must be fixed overhead too; handheld movement invalidates calibration.
    rectangle around the station. Include the largest garment plus margin; exclude
    belt edges, neighbouring items and operators' hands. The default is the whole
    camera frame. Cropping does not rescale pixels, so it preserves calibration.
-4. Remove the ruler, garment and hands. With the inspection area completely
-   empty, click **3. Capture empty inspection area**. Do not capture this reference
-   while a garment is present. Changing the area or calibration clears it.
-5. Click **Start inspection**. Put one underwear item flat and unstretched in
-   the area, front side up, waistband horizontal at the **top** of the image.
-6. Let the item pause. After about **1.25 seconds of a stable view**, one frame
-   is submitted. **Hold it still until the result appears.** Total dwell time
-   must include model inference and transfer time, shown beside the snapshot.
-   CPU inference can be much slower than the line; GTX 1050 Ti throughput still
-   needs measurement on your actual PC. No video-rate inference is promised.
-7. Remove the item. Leave the inspection area visibly empty for **at least one
-   second** before the next one. This gap rearms the trigger. If you need to retry
-   the same item, click **Reinspect item** while it is paused.
+4. Place one underwear item flat and unstretched in the area, front side up,
+   waistband horizontal at the **top** of the image, then click **Start
+   inspection**.
+5. The page waits for about **1.25 seconds of a stable view** (so the captured
+   frame isn't mid-motion), then submits one snapshot automatically — no
+   further click needed. **Start inspection** stays disabled while this runs.
+   Total time includes model inference and transfer time, shown beside the
+   snapshot. CPU inference can be much slower than the line; GTX 1050 Ti
+   throughput still needs measurement on your actual PC. No video-rate
+   inference is promised.
+6. The result (size, measurements and the closest reference) stays on screen
+   indefinitely — nothing clears it automatically. Remove the inspected item,
+   place the next one, and click **Start inspection** again whenever you're
+   ready; that click is what replaces the displayed result with the new item's.
+   If a capture fails or you want to redo the current item, just click **Start
+   inspection** again.
 
 The live video stays live. The annotated image is a separate, timestamped
 **inspected snapshot**, never an overlay pretending to track the moving garment.
-Movement/removal clears the current result and invalidates any pending response
-for that item. Only one request is outstanding per page; a busy server rejects
-other requests rather than queueing old frames. Stop prevents new requests and
-discards pending results; it does not cancel inference already running on the PC.
-Requests time out after five minutes, without interrupting the server's model.
+Only one request is outstanding per page; a busy server rejects other requests
+rather than queueing old frames. Because the page waits for you to press the
+button, there is no automatic presence/removal detection to confuse — the only
+thing that can go wrong before capture is the stillness check, which just waits
+longer if the item (or the camera) is still moving.
 
-Keep the page visible. Hiding the tab stops inspection. Camera disconnection,
-resolution changes or a frozen video reset setup. Physical camera movement,
-zoom, belt-height changes and lighting changes cannot all be detected reliably:
-stop, recalibrate and capture a new empty reference after any such change.
-Single-frame measurement for other clothing remains in the Inspection mode menu.
+Keep the page visible. Hiding the tab while a capture is in progress aborts the
+wait and requires pressing **Start inspection** again; it does not cancel
+inference already running on the PC if the request had already been sent.
+Camera disconnection, resolution changes or a frozen video reset setup.
+Physical camera movement, zoom, belt-height changes and lighting changes cannot
+all be detected reliably: recalibrate after any such change. Single-frame
+measurement for other clothing remains in the Inspection mode menu.
 
 ## References and decision rule
 
@@ -104,18 +120,25 @@ The old photo-upload page retains its existing manual size-comparison UI.
 
 ## Quality checks and limitations
 
-- Browser probes run four times per second on a small RGB preview. Presence
-  means at least 5% of preview pixels differ from the empty reference; stillness
-  requires no more than 1.5% changing pixels (average RGB difference over 22/255).
-  An anchor comparison also checks cumulative drift. Empty rearming needs 750 ms.
-  These are heuristics in `phone_web/inspection.mjs`, not a trained object tracker.
+- After you click **Start inspection**, the browser polls a small RGB preview
+  four times per second purely to detect *stillness* — no more than 1.5%
+  changing pixels (average RGB difference over 22/255) for about 1.25 seconds
+  — so the captured frame isn't blurry. An anchor comparison also checks
+  cumulative drift. This is a heuristic in `phone_web/inspection.mjs`
+  (`SettleGate`), not a trained object tracker, and it does **not** try to
+  detect whether an item is present — that's the operator's job (only press
+  the button when something is actually in view) and the server's job (see
+  next bullet).
 - The server rejects obviously empty, crowded, frame-filling or edge-clipped
   masks, and invalid/basic misaligned landmark geometry. Small mask noise is
   ignored. These checks cannot prove an object is underwear or reliably reject
   overlapping garments, folds, blur, hands or a convincing false segmentation.
-- Patterned/moving belts, shadows and lighting flicker can confuse presence and
-  stillness. A nearly identical replacement without a visible empty gap can be
-  missed. This mode requires separated, paused items and a clear station.
+  If the button is pressed with nothing in the area, expect an **Uncertain**
+  result with a reason like "No clear garment; place one item in the
+  inspection area." rather than a crash.
+- Patterned/moving belts, shadows, lighting flicker, or the operator's hand
+  lingering in frame can all register as "still" and get captured — the
+  stillness check only measures RGB change, not what's actually in view.
 - A one-dimensional ruler scale assumes a flat scene and negligible perspective
   and lens distortion. It is not a full camera calibration. Verify scale at the
   centre and edges with physical measurements before using the whole area.
@@ -123,7 +146,12 @@ The old photo-upload page retains its existing manual size-comparison UI.
   accuracy. Validate on multiple independently labelled garments per size,
   repeating measurements across placement and lighting conditions. Check actual
   dimensions with a ruler/tape and record wrong-size and uncertain outcomes.
-  Do not widen tolerances just to turn failures into matches.
+  Do not widen tolerances just to turn failures into matches. **Uncertain is an
+  expected, common outcome of this design** — it means no single reference
+  matched all four dimensions within tolerance, not that something is broken.
+  The result panel and saved snapshot both show the *closest* size and its
+  per-dimension deltas even when uncertain, specifically so a manual reviewer
+  has real numbers to judge from instead of a blank "no match."
 
 Before connecting this to automatic sorting, test the actual camera, fabric,
 lighting and GPU; collect representative labelled line images if the landmark
@@ -142,9 +170,10 @@ node --test test/test_inspection.mjs
 node --test test/test_live_page.mjs
 ```
 
-Python tests cover reference decisions, invalid calibration, frame-quality
-rejection, real measurement math with a stub detector, API compatibility and
-busy/error handling. Node tests cover the pause/empty/next-item trigger and stale
+Python tests cover reference decisions (including the closest-match fields
+reported when uncertain), invalid calibration, frame-quality rejection, real
+measurement math with a stub detector, API compatibility and busy/error
+handling. Node tests cover the settle-then-capture stillness trigger and stale
 result invalidation, plus page behavior with simulated camera/DOM adapters. These
 do not replace visual browser testing, a real camera or a production accuracy
 trial. Node is only needed for development tests, not to run the app.

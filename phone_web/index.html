@@ -22,24 +22,23 @@
           <option>shorts</option><option>skirt</option><option>trousers</option><option>vest</option><option>vest dress</option>
         </select></label>
         <div class="buttons"><button id="calibrate" class="secondary" disabled>1. Calibrate 12-inch ruler</button><button id="area" class="secondary" disabled>2. Set inspection area</button></div>
-        <button id="background" class="secondary" disabled>3. Capture empty inspection area</button>
         <button id="cancel" class="secondary" hidden>Cancel selection</button>
         <p id="setup" class="hint">Fix the camera directly overhead. Use the 0 and 12-inch ruler marks at garment height, not the metal ends.</p>
-        <div class="buttons"><button id="start" disabled>Start inspection</button><button id="stop" class="secondary" disabled>Stop</button><button id="retry" class="secondary" disabled>Reinspect item</button></div>
+        <button id="start" disabled>Start inspection</button>
         <button id="measure" hidden disabled>Measure one frame</button>
       </div>
     </section>
     <section class="panel" aria-label="Inspection result">
       <p class="eyebrow">CURRENT INSPECTION</p>
       <div id="size" class="size" aria-live="polite">Not running</div>
-      <p id="status" role="status">Calibrate, remove the ruler, then capture the empty inspection area.</p>
+      <p id="status" role="status">Calibrate the ruler, then set the inspection area.</p>
       <p id="activity" class="hint"></p>
       <div id="resultPanel" hidden>
         <p id="timing" class="hint"></p>
         <img id="result" alt="Last inspected snapshot with garment measurement lines">
-        <div class="table-scroll"><table><thead><tr><th>Flat dimension</th><th>Measured</th><th>Reference</th></tr></thead><tbody id="measurements"></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>Flat dimension</th><th>Measured</th><th id="referenceHeader">Reference</th></tr></thead><tbody id="measurements"></tbody></table></div>
       </div>
-      <p class="hint">Keep the waistband horizontal at the top. Leave clear background around the whole item and an empty gap between items. Hold each item until the result appears.</p>
+      <p class="hint">Keep the waistband horizontal at the top with clear background around the item. Present it, then press Start inspection; the result stays until you inspect the next item.</p>
       <details><summary>Your size references (inches)</summary><div class="table-scroll"><table id="references"></table></div>
         <p class="hint">A match requires all four dimensions within ±<span id="tolerance">0.50</span> in of exactly one reference. This provisional allowance is not a factory acceptance tolerance. Unmatched or ambiguous items need manual review.</p></details>
       <p class="hint">Reference-based estimate, not a certified size check. Only the supplied underwear style and sizes are supported. Camera/lighting changes require setup again.</p>
