@@ -20,6 +20,10 @@ stable-frame inspection, and M/L/XL/2XL estimates from your supplied measurement
 See [the live production-line guide](docs/LIVE_PRODUCTION_LINE.md) for setup,
 the required empty gap between garments, reference values and validation limits.
 
+New to this codebase? [The codebase guide](docs/CODEBASE_GUIDE.md) walks through every
+module, explains exactly how live video and calibration work, and includes a cookbook
+for common changes.
+
 The original upstream package documentation follows.
 
 [🌐 Official website](https://garmentiq.ly.gd.edu.kg/) | [📖 Documentation](https://garmentiq.ly.gd.edu.kg/documentation/) | [⚙️ Web pipeline](https://garmentiq.ly.gd.edu.kg/application/) | [🪄 MagicBox](https://garmentiq.ly.gd.edu.kg/documentation/magicbox/) | [📄 Paper](https://archive.gd.edu.kg/abs/20250525121523/)

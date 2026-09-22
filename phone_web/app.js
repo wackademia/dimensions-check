@@ -8,6 +8,10 @@ const probeContext = probe.getContext('2d', {willReadFrequently: true});
 let stream, roi, background, gate, timer, frozen;
 let scale = 0, selection = null, points = [], running = false, busy = false, epoch = 0;
 let cameraReady = false, lastState = '', lastVideoTime = -1, lastVideoAdvance = 0;
+// Keep a completed item's measurements on screen for a minimum stretch even if it
+// wobbles afterward; only an actual new inspection (see inspect()) overrides this early.
+const RESULT_HOLD_MS = 20000;
+let resultShownAt = 0;
 const isUnderwear = () => $('mode').value === 'underwear';
 const say = text => { $('status').textContent = text; };
 
@@ -124,6 +128,7 @@ function renderResult(data, capturedAt, elapsed) {
   say(decision ? decision.reason : 'Measurement complete. Values below are in inches.');
   $('timing').textContent = `Inspected snapshot: ${capturedAt.toLocaleTimeString()} · model ${data.inference_seconds}s · round trip ${elapsed.toFixed(1)}s. This is not the current video frame.`;
   $('result').src = data.image; $('resultPanel').hidden = false;
+  resultShownAt = performance.now();
   $('measurements').replaceChildren(...Object.entries(data.measurements).map(([name, value]) => {
     const row = document.createElement('tr');
     const reference = decision?.reference?.[name];
@@ -178,7 +183,11 @@ function tick() {
     const messages = {empty: 'Waiting for one item. Keep the inspection area empty between garments.',
       moving: 'Item is moving. Waiting for it to pause.', settling: 'Item detected. Waiting for a stable view.',
       clear: 'Item moved after inspection. Clear the area before the next item, or use Reinspect item.'};
-    if (messages[state.state]) { clearResult(state.state === 'clear' ? 'Clear area' : 'Waiting'); say(messages[state.state]); }
+    const holdingResult = now - resultShownAt < RESULT_HOLD_MS;
+    if (messages[state.state]) {
+      if (!holdingResult) clearResult(state.state === 'clear' ? 'Clear area' : 'Waiting');
+      say(messages[state.state]);
+    }
     lastState = state.state;
   }
   if (state.state === 'capture') {
